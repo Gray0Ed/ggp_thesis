@@ -8,12 +8,18 @@
 #include <functional>
 #include <algorithm>
 #include <cstring>
+#include <array>
+#include <climits>
 
 using namespace std;
-string input; const int MAX_SUB_NODES = 10;
-const int MAX_DOMAIN_VARS = 10;
+string input;
+const int MAX_DOMAIN_VARS = 20;
 
 hash<string> str_hasher;
+typedef array<short, MAX_DOMAIN_VARS> DomainValuation;
+
+unordered_map<string, int> numeric_rename;
+vector<string> reverse_numeric_rename;
 
 struct Token {
     string val;
@@ -89,79 +95,9 @@ void tokenize(Token &root) {
     root.shorten_edges();
 }
 
-template <typename T>
-struct LimitedArray {
-    T *items;
-    bool on_stack;
-    size_t size, max_sz;
-
-    LimitedArray() {
-        size = 0;
-        on_stack = false;
-        items = 0;
-    }
-
-    LimitedArray(size_t limit) {
-        max_sz = limit;
-        items = new T[max_sz];
-        size = 0;
-        on_stack = false;
-    }
-
-    LimitedArray(size_t limit, T* area) {
-        items = area;
-        on_stack = true;
-        size = 0;
-        max_sz = limit;
-    }
-
-    ~LimitedArray() {
-        if (!on_stack) {
-            delete [] items;
-        }
-    }
-
-    LimitedArray(const LimitedArray<T> &la) {
-        size = la.size;
-        for (int i = 0; i < size; ++i) items[i] = la.items[i];
-    }
-
-    LimitedArray<T> &operator=(const LimitedArray<T> &la) {
-        size = la.size;
-        for (int i = 0; i < size; ++i) items[i] = la.items[i];
-        return *this;
-    }
-
-    T &operator[](int i) {
-        assert(size >= 0);
-        assert(size <= max_sz);
-        assert(i < size && i >= 0);
-        return items[i];
-    }
-
-    T operator[](int i) const {
-        assert(size >= 0);
-        assert(size <= max_sz);
-        assert(i < size && i >= 0);
-        return items[i];
-    }
-
-    void append(const T& t) {
-        assert(size < max_sz);
-        items[size++] = t;
-    }
-
-    T &back(int i) {
-        return items[size - 1 - i];
-    }
-
-    T back(int i) const {
-        return items[size - 1 - i];
-    }
-};
-
 namespace TYPE {
     enum {
+        NONE,
         VAR,
         CONST,
         THEOREM,
@@ -169,207 +105,200 @@ namespace TYPE {
     };
 };
 
+namespace DTYPE {
+    enum {
+        SENTENCE,
+        THEOREM
+    };
+};
+
+
 struct Domain {
     size_t id; // hash of the pattern
+    int type; // 
     string pattern;
-    vector<unordered_set<string>> var_dom;
+    vector<DomainValuation> valuations;
+    int valuation_size;
     Domain(){}
-    Domain(string _pattern) {
+    Domain(string _pattern, int _type) {
+        type = _type;
         pattern = _pattern;
         id = str_hasher(pattern);
-        var_dom.resize(count(pattern.begin(), pattern.end(), '#'));
+        valuation_size = count(pattern.begin(), pattern.end(), '#');
+        assert(valuation_size <= MAX_DOMAIN_VARS);
     }
 
     string to_string() {
         string res = pattern + "\n";
-        for (auto & q: var_dom) {
-            for (auto &r: q) {
-                res += " " + r;
+        for (auto &dv: valuations) {
+            for (int i = 0; i < valuation_size; ++i) {
+                res += " " + reverse_numeric_rename[dv[i]];
             }
             res += "\n";
         }
         return res;
     }
 };
-
 unordered_map<size_t, Domain> domain_map;
+
+int rename(const string &token) {
+    if (numeric_rename.count(token) == 0) {
+        int s = numeric_rename.size();
+        numeric_rename[token] = s;
+        reverse_numeric_rename.push_back(token);
+        assert(reverse_numeric_rename.size() == s + 1);
+        assert(s <= SHRT_MAX);
+    }
+    return numeric_rename[token];
+}
 
 struct HighNode {
     int type;
     int n_theorem_vars;
     size_t domain_hash;
     string domain_pattern;
-    string value;
-    int nvalue;
+    int value;
+    int exp_var_id;
     Token debug_token;
     vector<HighNode> sub;
     vector<vector<unordered_set<string>*>> equivalence_sets;
 
+    bool is_complex_const() const {
+        return type == TYPE::CONST && sub.size() > 0;
+    }
+    
+    bool is_simple_const() const {
+        return type == TYPE::CONST && !is_complex_const();
+    }
+
+    bool is_simple_sentence() const {
+        return type == TYPE::SENTENCE && sub.size() == 0;
+    }
+
     void fill_from_token(const Token &t, 
-            unordered_map<string, int> &var_mapping) {
+            unordered_map<int, int> &var_mapping,
+            int induced_type=TYPE::NONE) {
         debug_token = t;
         if (t.leaf()) {
             assert(!t.val.empty());
-            if (t.val[0] == '?') {
-                type = TYPE::VAR;
-                if (var_mapping.count(t.val) == 0) {
-                    int sz = var_mapping.size();
-                    var_mapping[t.val] = sz; 
+            int renamed = rename(t.val);
+            if (induced_type == TYPE::CONST) {
+                if (t.val[0] == '?') {
+                    type = TYPE::VAR;
+                    if (var_mapping.count(renamed) == 0) {
+                        int sz = var_mapping.size();
+                        var_mapping[renamed] = sz; 
+                    }
+                    exp_var_id = var_mapping[renamed];
+                } else {
+                    type = TYPE::CONST;
+                    value = renamed;
                 }
-                nvalue = var_mapping[t.val];
             } else {
-                type = TYPE::CONST;
-                value = t.val;
+                assert(induced_type == TYPE::SENTENCE);
+                assert(t.val[0] != '?');
+                type = TYPE::SENTENCE;
+                value = renamed;
             }
         } else if (t(0) == "<=") {
             assert(t.sub.size() >= 3);
+            assert(induced_type == TYPE::NONE);
             type = TYPE::THEOREM;
             sub.resize(t.sub.size() - 1);
             for (int i = 1; i < t.sub.size(); ++i) {
-                sub[i - 1].fill_from_token(t.sub[i], var_mapping);
+                sub[i - 1].fill_from_token(t.sub[i], var_mapping, TYPE::SENTENCE);
                 if (i == 1) {
                     n_theorem_vars = var_mapping.size();
                 }
             }
         } else {
-            type = TYPE::SENTENCE;
+            if (induced_type == TYPE::CONST) {
+                type = TYPE::CONST;
+            } else {
+                assert(induced_type == TYPE::SENTENCE || induced_type == TYPE::NONE);
+                type = TYPE::SENTENCE;
+            }
             assert(!t.sub.empty());
             assert(t(0) != "");
             assert(t.sub[0].leaf());
-            value = t(0);
+            value = rename(t(0));
             sub.resize(t.sub.size() - 1);
             for (int i = 1; i < t.sub.size(); ++i) {
-                sub[i - 1].fill_from_token(t.sub[i], var_mapping);
+                sub[i - 1].fill_from_token(t.sub[i], var_mapping, TYPE::CONST);
             }
         }
+        assert(type != TYPE::NONE);
     }
 
     static vector<HighNode> generate_from_root(const Token &root) {
         vector<HighNode> res;
         res.resize(root.sub.size());
         for (int i = 0; i < root.sub.size(); ++i) {
-            unordered_map<string, int> var_mapping;
+            unordered_map<int, int> var_mapping;
             res[i].fill_from_token(root.sub[i], var_mapping);
         }
         return res;
     }
 
     string assign_domain_hash_and_pattern(unordered_map<size_t, unordered_set<string>> & checker) {
-        string res = value;
-        if (res == "next") {
+        string res;
+        if (type != TYPE::THEOREM) {
+            res = reverse_numeric_rename[value];
+        }
+        if (res == "next" || res == "init") {
             res = "true";
         }
         if (res == "legal") {
             res = "does";
         }
+        bool first_done = false;
         for (HighNode &hn: sub) {
-            if (type == TYPE::THEOREM) {
-                hn.assign_domain_hash_and_pattern(checker);
-            }
-            else if (hn.type == TYPE::VAR || hn.type == TYPE::CONST) {
+            if (hn.type == TYPE::VAR || hn.is_simple_const()) {
                 res += " #";
-            } else if (hn.type == TYPE::SENTENCE) {
+            } else if (hn.type == TYPE::SENTENCE || hn.is_complex_const()) {
                 res += " ( " + hn.assign_domain_hash_and_pattern(checker) + " )";
             } else {
+                cerr << debug_token.to_string() << endl;
+                cerr << hn.type << " " << hn.debug_token.to_string() << endl;
                 assert(0);
             }
+            if (type == TYPE::THEOREM && !first_done) {
+                first_done = true;
+                assert(hn.type == TYPE::SENTENCE);
+                res += " <=";
+            }
         }
-        if (type != TYPE::THEOREM) {
+        assert(type == TYPE::THEOREM || type == TYPE::SENTENCE || is_complex_const());
+        if (!is_complex_const()) {
             domain_pattern = res;
             domain_hash = str_hasher(res);
-            domain_map[domain_hash] = Domain(domain_pattern);
-            checker[domain_hash] = unordered_set<string>();
+            int domain_type;
+            if (type == TYPE::THEOREM) {
+                domain_type = DTYPE::THEOREM;
+            } else {
+                domain_type = DTYPE::SENTENCE;
+            }
+            domain_map[domain_hash] = Domain(domain_pattern, domain_type);
+            if (checker.count(domain_hash) == 0) {
+                checker[domain_hash] = unordered_set<string>();
+            }
             checker[domain_hash].insert(domain_pattern);
             assert(domain_map[domain_hash].id == domain_hash);
         }
-        assert(res.find("next") == string::npos && res.find("legal") == string::npos);
+        assert(res.find("next") == string::npos && 
+               res.find("legal") == string::npos && res.find("init") == string::npos);
         return res;
     }
 
-    void gather_domain_base_from_consts() {
-        if (type == TYPE::THEOREM) {
-            for (HighNode &hn: sub) {
-                hn.gather_domain_base_from_consts();
-            }
-        } else if (type == TYPE::SENTENCE) {
-            auto &var_dom = domain_map[domain_hash].var_dom;
-            int arg_counter = 0;
-            for (HighNode &hn: sub) {
-                if (hn.type == TYPE::CONST) {
-                    assert(arg_counter < var_dom.size());
-                    var_dom[arg_counter].insert(hn.value);
-                    arg_counter++;
-                } else if (hn.type == TYPE::VAR) {
-                    ++arg_counter;
-                } else if (hn.type == TYPE::SENTENCE) {
-                    hn.gather_domain_base_from_consts();
-                    const Domain &sub_d = domain_map[hn.domain_hash];
-                    for (int i = 0; i < sub_d.var_dom.size(); ++i) {
-                        assert(arg_counter < var_dom.size());
-                        var_dom[arg_counter].insert(
-                                sub_d.var_dom[i].begin(),
-                                sub_d.var_dom[i].end());
-                        ++arg_counter;
-                    }
-                } else {
-                    assert(0);
-                }
-            }
-        }
-    }
-
-    int domains_intersect(LimitedArray<unordered_set<string>> & var_intersect,
-                           LimitedArray<bool> & intersect_started) {
-        if (type == TYPE::SENTENCE && (value == "not" || value == "distinct")) {
-            return 0;
-        }
-        int counter = 0;
-        for (int i = 0; i < sub.size(); ++i) {
-            if (sub[i].type == TYPE::VAR) {
-                int n = sub[i].nvalue;
-                auto & domain_set = domain_map[domain_hash].var_dom[counter];
-                auto & cur_domain_set = var_intersect[n];
-                ++counter;
-                if (!intersect_started[n]) {
-                    intersect_started[n] = true;
-                    cur_domain_set = domain_set;
-                } else {
-                    string _stacked_data[cur_domain_set.size()];
-                    LimitedArray<string> to_remove(cur_domain_set.size(), _stacked_data);
-
-                    for (const auto &q: var_intersect[n]) {
-                        if (domain_set.count(q) == 0) {
-                            to_remove.append(q);
-                        }
-                    }
-                    for (int i = 0; i < to_remove.size; ++i) {
-                        cur_domain_set.erase(to_remove[i]);
-                    }
-                }
-            } else if (sub[i].type != TYPE::CONST) {
-                counter += sub[i].domains_intersect(var_intersect, intersect_started);
+    void gather_base_valuations_from_consts(DomainValuation &to_fill, int &index) {
+        for (HighNode &hn: sub) {
+            assert(hn.type == TYPE::CONST);
+            if (hn.is_simple_const()) {
+                to_fill[index++] = hn.value;
             } else {
-                ++counter;
+                hn.gather_base_valuations_from_consts(to_fill, index);
             }
         }
-        return counter;
-    }
-
-    int domains_union(LimitedArray<unordered_set<string>> & var_intersect) {
-        int counter = 0;
-        for (int i = 0; i < sub.size(); ++i) {
-            if (sub[i].type == TYPE::VAR) {
-                domain_map[domain_hash].var_dom[counter].insert(
-                    var_intersect[sub[i].nvalue].begin(),
-                    var_intersect[sub[i].nvalue].end());
-                ++counter;
-            } else if (sub[i].type != TYPE::CONST) {
-                counter += sub[i].domains_union(var_intersect);
-            } else {
-                ++counter;
-            }
-        }
-        return counter;
     }
 };
 
@@ -386,30 +315,11 @@ void collect_domain_types(vector<HighNode> & vhn) {
 void fill_domains(vector<HighNode> & vhn) {
     int max_th_vars = 0;
     for (HighNode &hn: vhn) {
-        hn.gather_domain_base_from_consts();
-        if (hn.type == TYPE::THEOREM) {
-            max_th_vars = max(max_th_vars, hn.n_theorem_vars);
-        }
-    }
-
-    bool changed = true;
-    LimitedArray<unordered_set<string>> var_intersect(max_th_vars);
-    LimitedArray<bool> intersect_started(max_th_vars);
-    while (changed) {
-        changed = false;
-        for (HighNode &hn: vhn) {
-            if (hn.type == TYPE::THEOREM) {
-                var_intersect.size = hn.n_theorem_vars;
-                intersect_started.size = hn.n_theorem_vars;
-                for (int i = 0; i < var_intersect.size; ++i) {
-                    var_intersect[i].clear();
-                    memset(intersect_started.items, 0, sizeof(bool) * intersect_started.size);
-                }
-                for (int i = 1; i < hn.sub.size(); ++i) {
-                    hn.sub[i].domains_intersect(var_intersect, intersect_started);
-                }
-                changed = changed || hn.sub[0].domains_union(var_intersect);
-            }
+        if (hn.type == TYPE::SENTENCE) {
+            DomainValuation new_valuation;
+            int index = 0;
+            hn.gather_base_valuations_from_consts(new_valuation, index);
+            domain_map[hn.domain_hash].valuations.push_back(new_valuation);
         }
     }
 }
