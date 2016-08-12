@@ -1,2 +1,2 @@
 all:
-	g++ --std=c++11 -g2 -o flatten flattener.cpp -D_GLIBCXX_DEBUG
+	g++ --std=c++14 -g -rdynamic -D_GLIBCXX_DEBUG -o flatten flattener.cpp -ldw
