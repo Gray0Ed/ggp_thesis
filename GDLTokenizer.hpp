@@ -1,6 +1,7 @@
 #include <vector>
 #include <cctype>
 #include <fstream>
+#include <cassert>
 
 using namespace std;
 
