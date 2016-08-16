@@ -3,19 +3,13 @@
 #include <algorithm>
 #include <fstream>
 #include <regex>
+#include <unordered_set>
 #include "GDLTokenizer.hpp"
 
 using namespace std;
 int main(int argc, char **argv) {
-    smatch maach;
-    regex reegex(" bla ([^[:space:]]) \1");
-    regex_search("bla bo bubla bi bi bla abi abi", maach, reegex);
-    cerr << "prefix: " << maach.prefix() << endl;
-    for (int i = 0; i < maach.size(); ++i) {
-        cerr << maach[i] << "\n";
-    }
-    cerr << "suffix: " << maach.suffix() << endl;
-    return 0;
+    smatch reg_mach;
+    regex reg_exp(" distinct ([^[:space:]]+) \\1");
     if (argc < 3) {
         cerr << "usage: " << argv[0] << " INPUT OUTPUT\n";
         return 1;
@@ -23,8 +17,14 @@ int main(int argc, char **argv) {
     vector<GDLToken> rule_tokens;
     GDLTokenizer::tokenize(argv[1], rule_tokens);
     vector<string> lines;
+    unordered_set<string> already_printed;
     for (const auto &token: rule_tokens) {
-        lines.push_back(token.to_nice_string() + "\n");
+        string nice_string = token.to_nice_string();
+        if (regex_search(nice_string, reg_mach, reg_exp) || already_printed.count(nice_string) > 0) {
+            continue;
+        }
+        already_printed.insert(nice_string);
+        lines.push_back(nice_string + "\n");
     }
     sort(lines.begin(), lines.end());
     ofstream output(argv[2]);
