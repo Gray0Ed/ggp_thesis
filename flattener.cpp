@@ -32,6 +32,14 @@ typedef LimitedArray<short, MAX_DOMAIN_VARS> DomainValuation;
 unordered_map<string, int> numeric_rename;
 vector<string> reverse_numeric_rename;
 
+void replace_first_occurence(string &to_modify, const string &to_replace,
+                             const string &replacement) {
+    auto pos = to_modify.find(to_replace);
+    if (pos != string::npos) {
+        to_modify.replace(pos, to_replace.size(), replacement);
+    }
+}
+
 struct Token {
     string val;
     vector<Token> sub;
@@ -42,6 +50,21 @@ struct Token {
             res += t.to_string(ntabs + 1);
         }
         res.insert(0, ntabs, ' ');
+        return res;
+    }
+
+    string to_nice_string() const {
+        string res = val;
+        if (!sub.empty()) {
+            assert(res == "");
+            res = "(";
+        }
+        for (const auto &subt: sub) {
+            res += " " + subt.to_nice_string();
+        }
+        if (!sub.empty()) {
+            res += " )";
+        }
         return res;
     }
 
@@ -139,7 +162,7 @@ struct Domain {
         valuation_size = count(pattern.begin(), pattern.end(), '#');
         assert(valuation_size <= MAX_DOMAIN_VARS);
     }
-
+    
     string to_string() {
         string res = pattern + "\n";
         for (auto &dv: valuations) {
@@ -150,9 +173,16 @@ struct Domain {
         }
         return res;
     }
+    
+    string to_full_string() const {
+        string res;
+        for (const auto &valuation: valuations) {
+            res += to_string_with_valuation(valuation) + '\n';
+        }
+        return res;
+    }
 
-    string to_string_with_valuation(const DomainValuation &valuation) {
-        string pattern = to_string();
+    string to_string_with_valuation(const DomainValuation &valuation) const {
         string res;
         int i = 0;
         for (char c: pattern) {
@@ -186,6 +216,7 @@ NAMED_PAIR(VarOccurence, int, sentence, int, index);
 struct AlignmentVarInfo {
     LimitedArray<VarOccurence, MAX_DOMAIN_VARS> occurences;
     LimitedArray<int, MAX_DOMAIN_VARS> different_than;
+    LimitedArray<int, MAX_DOMAIN_VARS> different_than_const;
 };
 
 struct AlignmentInfo {
@@ -222,6 +253,28 @@ struct HighNode {
     bool contains_variable;
     Token debug_token;
     vector<HighNode> sub;
+
+    string to_string() const {
+        string res = "(";
+        if (type == TYPE::THEOREM) {
+            res += " <=";
+        }
+        if (type == TYPE::SENTENCE || type == TYPE::TUPLE) {
+            res += " " + reverse_numeric_rename[value];
+        }
+        for (const auto &node: sub) {
+            if (node.type == TYPE::VAR || node.type == TYPE::CONST) {
+                res += " " + reverse_numeric_rename[node.value];
+            } else if (node.type == TYPE::SENTENCE || node.type == TYPE::TUPLE) {
+                res += " " + node.to_string();
+            } else {
+                assert(0);
+            }
+        }
+        assert(type == TYPE::THEOREM || type == TYPE::SENTENCE || type == TYPE::TUPLE);
+        res += " )";
+        return res;
+    }
 
     void fill_from_token(const Token &t, 
             unordered_map<int, int> &var_mapping,
@@ -301,6 +354,9 @@ struct HighNode {
         if (res == "legal") {
             res = "does";
         }
+        if (type == TYPE::THEOREM) {
+            res = "( <=" + res;
+        }
         bool first_done = false;
         for (HighNode &hn: sub) {
             if (hn.type == TYPE::VAR || hn.type == TYPE::CONST) {
@@ -315,8 +371,12 @@ struct HighNode {
             if (type == TYPE::THEOREM && !first_done) {
                 first_done = true;
                 assert(hn.type == TYPE::SENTENCE);
-                res += " <=";
+                replace_first_occurence(res, "true", "next");
+                replace_first_occurence(res, "does", "legal");
             }
+        }
+        if (type == TYPE::THEOREM) {
+            res += " )";
         }
         assert(type == TYPE::THEOREM || type == TYPE::SENTENCE || type == TYPE::TUPLE);
         if (type != TYPE::TUPLE) {
@@ -335,13 +395,13 @@ struct HighNode {
             checker[domain_hash].insert(domain_pattern);
             assert(domain_map[domain_hash].id == domain_hash);
         }
-        assert(res.find("next") == string::npos && 
-               res.find("legal") == string::npos && res.find("init") == string::npos);
+        assert(type == TYPE::THEOREM || (res.find("next") == string::npos && 
+               res.find("legal") == string::npos && res.find("init") == string::npos));
         return res;
     }
 
-    void gather_base_valuations_from_consts(DomainValuation &to_fill) {
-        for (HighNode &hn: sub) {
+    void gather_base_valuations_from_consts(DomainValuation &to_fill) const {
+        for (const HighNode &hn: sub) {
             assert(hn.type == TYPE::CONST || hn.type == TYPE::TUPLE);
             if (hn.type == TYPE::CONST) {
                 to_fill.append(hn.value);
@@ -351,21 +411,22 @@ struct HighNode {
         }
     }
 
-    void collect_distinct_info(LimitedArray<AlignmentVarInfo, MAX_DOMAIN_VARS> &var_infos) {
+    void collect_distinct_info(LimitedArray<AlignmentVarInfo, MAX_DOMAIN_VARS> &var_infos) const {
         assert(reverse_numeric_rename[value] == "distinct");
         assert(sub.size() == 2);
-        HighNode *left_node = &sub[0];
-        HighNode *right_node = &sub[1];
+        const HighNode *left_node = &sub[0];
+        const HighNode *right_node = &sub[1];
         if (left_node->type == TYPE::CONST) {
             swap(left_node, right_node);
         }
         assert(left_node->type == TYPE::VAR);
         assert(right_node->type == TYPE::VAR || right_node->type == TYPE::CONST);
-        int right_id = -right_node->value;
         if (right_node->type == TYPE::VAR) {
-            right_id = right_node->exp_var_id;
+            var_infos[left_node->exp_var_id].different_than.append(right_node->exp_var_id);
+            var_infos[right_node->exp_var_id].different_than.append(left_node->exp_var_id);
+        } else {
+            var_infos[left_node->exp_var_id].different_than_const.append(right_node->value);
         }
-        var_infos[left_node->exp_var_id].different_than.append(right_id);
     }
 
     void fill_var_constraints(LimitedArray<VarConstraint, MAX_DOMAIN_VARS> &constraints) const {
@@ -428,27 +489,28 @@ struct HighNode {
         }
     }
 
-    AlignmentInfo alignment_info() {
+    AlignmentInfo alignment_info() const {
         assert(type == TYPE::THEOREM);
         AlignmentInfo res;
         res.destination_theorem = domain_hash;
         res.destination_sentence = sub[0].domain_hash;
-        res.sources_new_valuations_n = 0;
+        res.sources_new_valuations_n = 1;
         res.var_infos.size = theorem_vars_n; 
         fill_var_in_dom_indices(res.domain_filling_pattern);
-        sub[0].fill_var_occurences(res.var_infos, 0);
         auto &var_infos = res.var_infos;
+        int counter = 0;
         for (int i = 1; i < sub.size(); ++i) {
             const string & sub_svalue = reverse_numeric_rename[sub[i].value];
-            if (sub_svalue == "not" || !sub[i].contains_variable) continue;
             if (sub_svalue == "distinct") {
                 sub[i].collect_distinct_info(var_infos);
-            } else {
+            } else if (sub_svalue != "not") {
                 res.source_sentences.append(sub[i].domain_hash);
                 res.sources_new_valuations_n += domain_map[sub[i].domain_hash].valuations.size();
                 res.source_constraints.grow();
                 sub[i].fill_var_constraints(res.source_constraints.back());
-                sub[i].fill_var_occurences(var_infos, i);
+                sub[i].fill_var_occurences(var_infos, counter);
+                cerr << sub[i].domain_pattern << " ";
+                ++counter;
             }
         }
 
@@ -475,8 +537,8 @@ void collect_domain_types(vector<HighNode> & vhn) {
     }
 }
 
-void collect_initial_valuations(vector<HighNode> &rules) {
-    for (HighNode &hn: rules) {
+void collect_initial_valuations(const vector<HighNode> &rules){
+    for (const HighNode &hn: rules) {
         if (hn.type == TYPE::SENTENCE) {
             DomainValuation new_valuation;
             hn.gather_base_valuations_from_consts(new_valuation);
@@ -485,11 +547,14 @@ void collect_initial_valuations(vector<HighNode> &rules) {
     }
 }
 
-vector<AlignmentInfo> collect_alignment_infos(vector<HighNode> &rules) {
+vector<AlignmentInfo> collect_alignment_infos(const vector<HighNode> &rules) {
     vector<AlignmentInfo> res;
-    for (auto hn: rules) {
+    for (const auto &hn: rules) {
         if (hn.type == TYPE::THEOREM) {
             res.push_back(hn.alignment_info());
+            cerr << res.back().sources_new_valuations_n << endl;
+            cerr << hn.domain_pattern << endl;
+            cerr << domain_map[hn.sub[0].domain_hash].to_string();
         }
     }
     return res;
@@ -502,6 +567,7 @@ struct Aligner {
     LimitedArray<vector<DomainValuation>*, MAX_SENTENCES_IN_THEOREM> valuations_sets;
     LimitedArray<LimitedArray<int, MAX_TERMS_N>, MAX_SENTENCES_IN_THEOREM> indices;
     LimitedArray<LimitedArray<int, MAX_DOMAIN_VARS>, MAX_DOMAIN_VARS> banned_var_values;
+    vector<DomainValuation> new_valuations;
 
     typedef LimitedArray<pair<int, int>, MAX_SENTENCES_IN_THEOREM> IndexBound;
     LimitedArray<IndexBound, MAX_TERMS_N * 3> bounds_stack;
@@ -514,7 +580,7 @@ struct Aligner {
         return ai.var_infos.size;
     }
 
-    void prepare_indices() {
+    bool prepare_indices() {
         for (int sentence_i = 0; sentence_i < sentences_n(); ++sentence_i) {
             valuations_sets[sentence_i] = &domain_map[ai.source_sentences[sentence_i]].valuations;
             int valuation_index = 0;
@@ -531,7 +597,11 @@ struct Aligner {
                 }
                 ++valuation_index;
             }
+            if (indices[sentence_i].size == 0) {
+                return false;
+            }
         }
+        return true;
     }
 
     bool split_by_var(int split_by_var_id) {
@@ -543,6 +613,8 @@ struct Aligner {
         for (const auto &occurence: occurences) {
             const auto &bound = input_bounds[occurence.sentence];
             auto &sindices = indices[occurence.sentence];
+            assert(sindices.size > 0);
+            assert(bound.first < bound.second);
             auto &valuation_set = *valuations_sets[occurence.sentence];
             sort(&sindices[0] + bound.first, &sindices[0] + bound.second, 
                 [&valuation_set, &occurence](const auto &a, const auto &b) -> bool {
@@ -552,7 +624,7 @@ struct Aligner {
         }
         LimitedArray<int, MAX_SENTENCES_IN_THEOREM> processed_index;
         for (int i = 0; i < sentences_n(); ++i) {
-            processed_index.append(0);
+            processed_index.append(input_bounds[i].first);
         }
         const auto &moccurence = occurences[0];
         const auto &mbound = input_bounds[moccurence.sentence];
@@ -602,6 +674,12 @@ struct Aligner {
         }
     }
 
+    void initialize_banned_var_values() {
+        for (const auto &vi: ai.var_infos) {
+            banned_var_values.append(vi.different_than_const);
+        }
+    }
+
     void ban_by_var(int var_id) {
         const auto &oc = ai.var_infos[var_id].occurences[0];
         const auto &bound = bounds_stack.back()[oc.sentence];
@@ -619,41 +697,71 @@ struct Aligner {
         }
     }
 
-    void recompute() {
-        vector<DomainValuation> new_valuations;
-        indices.size = valuations_sets.size = sentences_n();
-        prepare_indices();
+    void const_only_filler() {
+        DomainValuation new_valuation;
+        for (int vi: ai.domain_filling_pattern) {
+            assert(vi < 0);
+            new_valuation.append(-vi - 1);
+        }
+        new_valuations.push_back(new_valuation);
+    }
 
-        banned_var_values.resize(vars_n());
+    void apply_new_valuations() {
+        auto &dt = domain_map[ai.destination_theorem];
+        auto &ds = domain_map[ai.destination_sentence];
+        dt.valuations.insert(dt.valuations.end(), new_valuations.begin(), new_valuations.end());
+        sort(dt.valuations.begin(), dt.valuations.end());
+        auto dt_last = unique(dt.valuations.begin(), dt.valuations.end());
+        dt.valuations.erase(dt_last, dt.valuations.end());
+
+        for (auto & new_valuation: new_valuations) {
+            new_valuation.resize(ds.valuation_size);
+            ds.valuations.push_back(new_valuation);
+        }
+        sort(ds.valuations.begin(), ds.valuations.end());
+        auto last = unique(ds.valuations.begin(), ds.valuations.end());
+        ds.valuations.erase(last, ds.valuations.end());
+    }
+
+    void recompute() {
+        if (sentences_n() == 0) {
+            const_only_filler();
+            apply_new_valuations();
+            return;
+        }
+        indices.size = valuations_sets.size = sentences_n();
+        if (!prepare_indices()) {
+            return;
+        }
+
+        if (vars_n() == 0) {
+            const_only_filler();
+            apply_new_valuations();
+            return;
+        }
+        initialize_banned_var_values();
 
         bounds_stack.resize(1);
-        bounds_stack[0].resize(vars_n());
-        for (int i = 0; i < vars_n(); ++i) {
-            bounds_stack[0][i].first = 0;
-            bounds_stack[0][i].second = indices[i].size;
+        for (int i = 0; i < sentences_n(); ++i) {
+            bounds_stack[0].append(make_pair(0, (int)indices[i].size));
         }
         split_by_var(ai.binding_order[0]);
-        LimitedArray<int, MAX_DOMAIN_VARS> last_bound_index;
-        last_bound_index.append(bounds_stack.size - 1);
+        LimitedArray<int, MAX_DOMAIN_VARS> level_size;
+        level_size.append(bounds_stack.size);
         while ("Elvis Lives") {
-            while (last_bound_index.size > 0 && 
-                   last_bound_index.back() > bounds_stack.size - 1) {
-                last_bound_index.pop();
-                const int level_id = last_bound_index.size - 1;
+            while (level_size.size > 0 && 
+                   level_size.back() == 0) {
+                level_size.pop();
+                const int level_id = level_size.size - 1;
                 if (level_id >= 0) {
                     unban(ai.binding_order[level_id]);
                 }
             }
-            if (last_bound_index.size == 0) break;
-            const int level_id = last_bound_index.size - 1;
-            const int binded_var_id = ai.binding_order[level_id];
+            if (level_size.size == 0) break;
+            const int level_id = level_size.size - 1;
+            assert(level_size.back() > 0);
+            --level_size.back();
             int lower_limit = 1;
-            if (last_bound_index.size > 1) {
-                lower_limit = last_bound_index.back(1) + 1;
-            }
-            if (last_bound_index.back() > lower_limit) {
-                --last_bound_index.back();
-            }
             if (level_id == vars_n() - 1) {
                 DomainValuation new_valuation;
                 for (int vi: ai.domain_filling_pattern) {
@@ -661,6 +769,7 @@ struct Aligner {
                         --vi;
                         const auto &oc = ai.var_infos[vi].occurences[0];
                         const auto &ib = bounds_stack.back()[oc.sentence];
+                        assert(ib.first + 1 == ib.second);
                         new_valuation.append(
                             valuations_sets[oc.sentence]->at(
                                 indices[oc.sentence][ib.first]
@@ -673,37 +782,27 @@ struct Aligner {
                     }
                 }
                 new_valuations.push_back(new_valuation);
+                bounds_stack.pop();
             } else {
-                ban_by_var(binded_var_id);
-                size_t obs = bounds_stack.size;
-                split_by_var(binded_var_id);
-                last_bound_index.append(max(obs, bounds_stack.size) - 1);
+                ban_by_var(ai.binding_order[level_id]);
+                size_t base = bounds_stack.size - 1;
+                split_by_var(ai.binding_order[level_id + 1]);
+                level_size.append(bounds_stack.size - base);
             }
         }
-        auto &dt = domain_map[ai.destination_theorem];
-        auto &ds = domain_map[ai.destination_sentence];
-        
-        dt.valuations = new_valuations;
-        for (auto & new_valuation: new_valuations) {
-            new_valuation.resize(ds.valuation_size);
-            ds.valuations.push_back(new_valuation);
-        }
-        sort(ds.valuations.begin(), ds.valuations.end());
-        unique(ds.valuations.begin(), ds.valuations.end());
+        apply_new_valuations();
     }
 
 };
 
 
-
-void fill_domains(vector<HighNode> &rules) {
+void fill_domains(const vector<HighNode> &rules) {
    collect_initial_valuations(rules);
    cerr << "initial valuations collected" << endl;
-   for (auto & dm: domain_map) {
-       cerr << dm.second.to_string();
-   }
    vector<AlignmentInfo> alignment_infos = collect_alignment_infos(rules);
+   void *memory = malloc(sizeof(Aligner));
    while ("Elvis Lives") {
+       cerr << "iteration done" << endl;
        int biggest_change = 0;
        AlignmentInfo *to_be_processed = 0;
        for (auto &ai: alignment_infos) {
@@ -717,23 +816,37 @@ void fill_domains(vector<HighNode> &rules) {
        }
 
        Domain &to_recompute = domain_map[to_be_processed->destination_sentence];
+       cerr << "doing: " << domain_map[to_be_processed->destination_theorem].pattern << endl;
        int old_valuations_n = to_recompute.valuations.size();
-       Aligner(*to_be_processed).recompute();
+       (new(memory) Aligner(*to_be_processed))->recompute();
        to_be_processed->sources_new_valuations_n = 0;
        int valuations_n_delta = to_recompute.valuations.size() - old_valuations_n;
+       cerr << "new valuations n: " << valuations_n_delta << endl;
+       //cerr << "resulting theorem valuations: \n" << domain_map[to_be_processed->destination_theorem].to_full_string() << endl;
+       //cerr << "resulting domain valuations: \n" << domain_map[to_be_processed->destination_sentence].to_full_string() << endl;
        for (auto &ai: alignment_infos) {
            if (ai.source_sentences.contains(to_recompute.id)) {
                ai.sources_new_valuations_n += valuations_n_delta;
            }
        }
    }
+   free(memory);
 }
 
 void print_solved_theorems(const vector<HighNode> &rules) {
+    unordered_set<string> printed_strings;
     for (auto &rule: rules) {
-        if (rule.type != TYPE::THEOREM) continue;
-        for (const auto &valuation: domain_map[rule.domain_hash].valuations) {
-            cerr << domain_map[rule.domain_hash].to_string_with_valuation(valuation) << '\n';
+        string to_print;
+        const auto &dom = domain_map[rule.domain_hash]; 
+        if (rule.type != TYPE::THEOREM) {
+            assert(rule.type == TYPE::SENTENCE);
+            to_print = "( <= " + rule.to_string() + " )\n";
+        } else {
+            to_print = dom.to_full_string();
+        }
+        if (printed_strings.count(to_print) == 0) {
+            printed_strings.insert(to_print);
+            cout << to_print;
         }
     }
 }
@@ -747,18 +860,17 @@ int main(int argc, char **argv) {
     ifstream inp(argv[1]);
     input = string((istreambuf_iterator<char>(inp)),
             istreambuf_iterator<char>());
-   // Token root;
-   // tokenize(root);
-// //   root.shorten_edges();
-   // cerr << root.to_string() << endl;
-   // vector<HighNode> rules = HighNode::generate_from_root(root); 
-   // collect_domain_types(rules);
-   // for (auto & hn: rules) {
-   //     cerr << hn.domain_pattern << endl;
-   // }
-   // cerr << rules.size() << endl;
-    vector<HighNode> bum;
-    fill_domains(bum);
-//    print_solved_theorems(rules);
+    Token root;
+    tokenize(root);
+    //cerr << root.to_string() << endl;
+    for (const auto &su: root.sub) {
+        cerr << su.to_nice_string() + "\n";
+    }
+    cerr << "XXXX" << endl;
+    vector<HighNode> rules = HighNode::generate_from_root(root); 
+    collect_domain_types(rules);
+    cerr << rules.size() << endl;
+    fill_domains(rules);
+    print_solved_theorems(rules);
     return 0;
 }
