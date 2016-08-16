@@ -11,7 +11,6 @@
 #include <climits>
 #include <tuple>
 
-#include "LimitedArray.hpp"
 
 #define BACKWARD_HAS_DW 1
 #include "backward.hpp"
@@ -20,8 +19,10 @@ namespace backward {
     backward::SignalHandling sh;
 };
 
+#include "LimitedArray.hpp"
+#include "GDLTokenizer.hpp"
 using namespace std;
-string input;
+
 const int MAX_DOMAIN_VARS = 20;
 const int MAX_SENTENCES_IN_THEOREM = 10;
 const int MAX_TERMS_N = 100000;
@@ -38,95 +39,6 @@ void replace_first_occurence(string &to_modify, const string &to_replace,
     if (pos != string::npos) {
         to_modify.replace(pos, to_replace.size(), replacement);
     }
-}
-
-struct Token {
-    string val;
-    vector<Token> sub;
-
-    string to_string(int ntabs=0) const {
-        string res = val + ":\n";
-        for (const Token & t: sub) {
-            res += t.to_string(ntabs + 1);
-        }
-        res.insert(0, ntabs, ' ');
-        return res;
-    }
-
-    string to_nice_string() const {
-        string res = val;
-        if (!sub.empty()) {
-            assert(res == "");
-            res = "(";
-        }
-        for (const auto &subt: sub) {
-            res += " " + subt.to_nice_string();
-        }
-        if (!sub.empty()) {
-            res += " )";
-        }
-        return res;
-    }
-
-    bool leaf() const {
-        return sub.empty();
-    }
-
-    //string &operator()(int i) {
-    //    assert(sub.size() >= 0);
-    //    assert(i < sub.size() && i >= 0);
-    //    return sub[i].val;
-    //}
-
-    string operator()(int i) const {
-        assert(sub.size() >= 0);
-        assert(i < sub.size() && i >= 0);
-        return sub[i].val;
-    }
-
-    void shorten_edges() {
-        for (Token &t : sub) {
-            t.shorten_edges();
-        }
-        if (sub.size() == 1) {
-            *this = sub[0];
-        }
-    }
-};
-
-
-bool is_whitespace(char c) {
-    return isspace(c);
-}
-
-bool is_name_char(char c) {
-    return !is_whitespace(c) && c != '(' && c != ')';
-}
-
-int _tokenize(int c, Token &to_fill) {
-    if (input.size() == c) return c;
-    char cur = input[c];
-    if (cur == '(') {
-        to_fill.sub.push_back(Token());
-        return _tokenize(_tokenize(c + 1, to_fill.sub.back()), to_fill);
-    } else if (cur == ')') {
-        return c + 1;
-    } else if (is_whitespace(cur)) {
-        return _tokenize(c + 1, to_fill);
-    } else {
-        int s = c;
-        while (c < input.size() && is_name_char(input[c])) {
-            ++c;
-        }
-        to_fill.sub.push_back(Token());
-        to_fill.sub.back().val = input.substr(s, c - s);
-        return _tokenize(c, to_fill);
-    }
-}
-
-void tokenize(Token &root) {
-    assert(_tokenize(0, root) == input.size());
-    root.shorten_edges();
 }
 
 namespace TYPE {
@@ -251,7 +163,7 @@ struct HighNode {
     int value;
     int exp_var_id;
     bool contains_variable;
-    Token debug_token;
+    GDLToken debug_token;
     vector<HighNode> sub;
 
     string to_string() const {
@@ -276,7 +188,7 @@ struct HighNode {
         return res;
     }
 
-    void fill_from_token(const Token &t, 
+    void fill_from_token(const GDLToken &t, 
             unordered_map<int, int> &var_mapping,
             int induced_type=TYPE::NONE) {
         debug_token = t;
@@ -333,12 +245,13 @@ struct HighNode {
         assert(type != TYPE::NONE);
     }
 
-    static vector<HighNode> generate_from_root(const Token &root) {
+    static vector<HighNode> generate_from_tokens(const vector<GDLToken> &tokens) {
         vector<HighNode> res;
-        res.resize(root.sub.size());
-        for (int i = 0; i < root.sub.size(); ++i) {
+        res.reserve(tokens.size());
+        for (auto &tok: tokens) {
             unordered_map<int, int> var_mapping;
-            res[i].fill_from_token(root.sub[i], var_mapping);
+            res.push_back(HighNode());
+            res.back().fill_from_token(tok, var_mapping);
         }
         return res;
     }
@@ -857,17 +770,14 @@ int main(int argc, char **argv) {
         cerr << "no input provided" << endl;
         return 1;
     }
-    ifstream inp(argv[1]);
-    input = string((istreambuf_iterator<char>(inp)),
-            istreambuf_iterator<char>());
-    Token root;
-    tokenize(root);
+    vector<GDLToken> rule_tokens;
+    GDLTokenizer::tokenize(argv[1], rule_tokens);
     //cerr << root.to_string() << endl;
-    for (const auto &su: root.sub) {
-        cerr << su.to_nice_string() + "\n";
+    for (const auto &token: rule_tokens) {
+        cerr << token.to_nice_string() + "\n";
     }
     cerr << "XXXX" << endl;
-    vector<HighNode> rules = HighNode::generate_from_root(root); 
+    vector<HighNode> rules = HighNode::generate_from_tokens(rule_tokens); 
     collect_domain_types(rules);
     cerr << rules.size() << endl;
     fill_domains(rules);
