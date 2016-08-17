@@ -12,6 +12,7 @@
 #include <tuple>
 
 
+#ifndef NO_BACKWARD
 #define BACKWARD_HAS_DW 1
 #include "backward.hpp"
 
@@ -19,12 +20,14 @@ namespace backward {
     backward::SignalHandling sh;
 };
 
+#endif
+
 #include "LimitedArray.hpp"
 #include "GDLTokenizer.hpp"
 using namespace std;
 
-const int MAX_DOMAIN_VARS = 20;
-const int MAX_SENTENCES_IN_THEOREM = 10;
+const int MAX_DOMAIN_VARS = 80;
+const int MAX_SENTENCES_IN_THEOREM = 15;
 const int MAX_TERMS_N = 100000;
 
 hash<string> str_hasher;
@@ -146,7 +149,7 @@ struct AlignmentInfo {
 
 int rename(const string &token) {
     if (numeric_rename.count(token) == 0) {
-        int s = numeric_rename.size();
+        size_t s = numeric_rename.size();
         numeric_rename[token] = s;
         reverse_numeric_rename.push_back(token);
         assert(reverse_numeric_rename.size() == s + 1);
@@ -157,7 +160,7 @@ int rename(const string &token) {
 
 struct HighNode {
     int type;
-    int theorem_vars_n;
+    size_t theorem_vars_n;
     size_t domain_hash;
     string domain_pattern;
     int value;
@@ -220,7 +223,7 @@ struct HighNode {
             assert(induced_type == TYPE::NONE);
             type = TYPE::THEOREM;
             sub.resize(t.sub.size() - 1);
-            for (int i = 1; i < t.sub.size(); ++i) {
+            for (size_t i = 1; i < t.sub.size(); ++i) {
                 sub[i - 1].fill_from_token(t.sub[i], var_mapping, TYPE::SENTENCE);
                 contains_variable = contains_variable || sub[i - 1].contains_variable;
             }
@@ -237,7 +240,7 @@ struct HighNode {
             assert(t.sub[0].leaf());
             value = rename(t(0));
             sub.resize(t.sub.size() - 1);
-            for (int i = 1; i < t.sub.size(); ++i) {
+            for (size_t i = 1; i < t.sub.size(); ++i) {
                 sub[i - 1].fill_from_token(t.sub[i], var_mapping, TYPE::TUPLE);
                 contains_variable = contains_variable || sub[i - 1].contains_variable;
             }
@@ -409,10 +412,14 @@ struct HighNode {
         res.destination_sentence = sub[0].domain_hash;
         res.sources_new_valuations_n = 1;
         res.var_infos.size = theorem_vars_n; 
+        for (auto &vi: res.var_infos) {
+            assert(vi.occurences.size == 0);
+        }
+        assert(res.domain_filling_pattern.size == 0);
         fill_var_in_dom_indices(res.domain_filling_pattern);
         auto &var_infos = res.var_infos;
         int counter = 0;
-        for (int i = 1; i < sub.size(); ++i) {
+        for (size_t i = 1; i < sub.size(); ++i) {
             const string & sub_svalue = reverse_numeric_rename[sub[i].value];
             if (sub_svalue == "distinct") {
                 sub[i].collect_distinct_info(var_infos);
@@ -422,13 +429,13 @@ struct HighNode {
                 res.source_constraints.grow();
                 sub[i].fill_var_constraints(res.source_constraints.back());
                 sub[i].fill_var_occurences(var_infos, counter);
-                cerr << sub[i].domain_pattern << " ";
+                //cerr << sub[i].domain_pattern << " ";
                 ++counter;
             }
         }
 
         res.binding_order.size = theorem_vars_n;
-        for (int i = 0; i < theorem_vars_n; ++i) {
+        for (size_t i = 0; i < theorem_vars_n; ++i) {
             res.binding_order[i] = i;
         }
         sort(res.binding_order.begin(), res.binding_order.end(),
@@ -465,9 +472,9 @@ vector<AlignmentInfo> collect_alignment_infos(const vector<HighNode> &rules) {
     for (const auto &hn: rules) {
         if (hn.type == TYPE::THEOREM) {
             res.push_back(hn.alignment_info());
-            cerr << res.back().sources_new_valuations_n << endl;
-            cerr << hn.domain_pattern << endl;
-            cerr << domain_map[hn.sub[0].domain_hash].to_string();
+            //cerr << res.back().sources_new_valuations_n << endl;
+            //cerr << hn.domain_pattern << endl;
+            //cerr << domain_map[hn.sub[0].domain_hash].to_string();
         }
     }
     return res;
@@ -517,7 +524,7 @@ struct Aligner {
         return true;
     }
 
-    bool split_by_var(int split_by_var_id) {
+    void split_by_var(int split_by_var_id) {
         const auto &occurences = ai.var_infos[split_by_var_id].occurences;
         const auto &banned_values = banned_var_values[split_by_var_id];
         const IndexBound input_bounds = bounds_stack.back();
@@ -558,7 +565,10 @@ struct Aligner {
             bounds_stack.grow();
             IndexBound &ib_to_fill = bounds_stack.back();
             ib_to_fill.resize(sentences_n());
-            memset(&ib_to_fill[0], 0xff, sentences_n() * sizeof(pair<int, int>));
+            for (auto &ib: ib_to_fill) {
+                ib.first = -1;
+                ib.second = -1;
+            }
             for (const auto &occurence: occurences) {
                 int &pi = processed_index[occurence.sentence];
                 const auto &bound = input_bounds[occurence.sentence];
@@ -661,7 +671,10 @@ struct Aligner {
         split_by_var(ai.binding_order[0]);
         LimitedArray<int, MAX_DOMAIN_VARS> level_size;
         level_size.append(bounds_stack.size);
+        //cerr << "boom" << endl;
+        //cerr << ai.var_infos[0].occurences[0].sentence << endl;
         while ("Elvis Lives") {
+          //  cerr << "baam" << endl;
             while (level_size.size > 0 && 
                    level_size.back() == 0) {
                 level_size.pop();
@@ -674,13 +687,17 @@ struct Aligner {
             const int level_id = level_size.size - 1;
             assert(level_size.back() > 0);
             --level_size.back();
-            int lower_limit = 1;
+            //cerr << "biim" << endl;
             if (level_id == vars_n() - 1) {
+                //cerr << "bwum" << endl;
                 DomainValuation new_valuation;
                 for (int vi: ai.domain_filling_pattern) {
                     if (vi > 0) {
                         --vi;
                         const auto &oc = ai.var_infos[vi].occurences[0];
+         //               cerr << vi << endl;
+         //               cerr << oc.sentence << endl;
+         //               cerr << "XOO: " << oc.index << " " << ai.var_infos[vi].occurences.size << endl;
                         const auto &ib = bounds_stack.back()[oc.sentence];
                         assert(ib.first + 1 == ib.second);
                         new_valuation.append(
@@ -697,6 +714,7 @@ struct Aligner {
                 new_valuations.push_back(new_valuation);
                 bounds_stack.pop();
             } else {
+                //cerr << "buum" << endl;
                 ban_by_var(ai.binding_order[level_id]);
                 size_t base = bounds_stack.size - 1;
                 split_by_var(ai.binding_order[level_id + 1]);
@@ -711,32 +729,35 @@ struct Aligner {
 
 void fill_domains(const vector<HighNode> &rules) {
    collect_initial_valuations(rules);
-   cerr << "initial valuations collected" << endl;
+   //cerr << "initial valuations collected" << endl;
    vector<AlignmentInfo> alignment_infos = collect_alignment_infos(rules);
    void *memory = malloc(sizeof(Aligner));
+   int total_valuations_found = 0;
    while ("Elvis Lives") {
-       cerr << "iteration done" << endl;
-       int biggest_change = 0;
-       AlignmentInfo *to_be_processed = 0;
-       for (auto &ai: alignment_infos) {
-           if (ai.sources_new_valuations_n > biggest_change) {
-               biggest_change = ai.sources_new_valuations_n;
-               to_be_processed = &ai;
+       //cerr << "iteration done" << endl;
+       size_t to_be_processed_index = 0;
+       for (size_t i = 0; i < alignment_infos.size(); ++i) {
+           if (alignment_infos[i].sources_new_valuations_n > 
+               alignment_infos[to_be_processed_index].sources_new_valuations_n) {
+               to_be_processed_index = i;
            }
        }
-       if (to_be_processed == 0) {
+       if (alignment_infos[to_be_processed_index].sources_new_valuations_n == 0) {
            break;
        }
+       AlignmentInfo &to_be_processed = alignment_infos[to_be_processed_index];
 
-       Domain &to_recompute = domain_map[to_be_processed->destination_sentence];
-       cerr << "doing: " << domain_map[to_be_processed->destination_theorem].pattern << endl;
+       Domain &to_recompute = domain_map[to_be_processed.destination_sentence];
+       //cerr << "doing: " << domain_map[to_be_processed.destination_theorem].pattern << endl;
        int old_valuations_n = to_recompute.valuations.size();
-       (new(memory) Aligner(*to_be_processed))->recompute();
-       to_be_processed->sources_new_valuations_n = 0;
+       (new(memory) Aligner(to_be_processed))->recompute();
+       to_be_processed.sources_new_valuations_n = 0;
        int valuations_n_delta = to_recompute.valuations.size() - old_valuations_n;
-       cerr << "new valuations n: " << valuations_n_delta << endl;
-       //cerr << "resulting theorem valuations: \n" << domain_map[to_be_processed->destination_theorem].to_full_string() << endl;
-       //cerr << "resulting domain valuations: \n" << domain_map[to_be_processed->destination_sentence].to_full_string() << endl;
+       total_valuations_found += valuations_n_delta;
+       //cerr << "new valuations n: " << valuations_n_delta << endl;
+       //cerr << "total valuations n: " << total_valuations_found << endl;
+       //cerr << "resulting theorem valuations: \n" << domain_map[to_be_processed.destination_theorem].to_full_string() << endl;
+       //cerr << "resulting domain valuations: \n" << domain_map[to_be_processed.destination_sentence].to_full_string() << endl;
        for (auto &ai: alignment_infos) {
            if (ai.source_sentences.contains(to_recompute.id)) {
                ai.sources_new_valuations_n += valuations_n_delta;
@@ -772,14 +793,13 @@ int main(int argc, char **argv) {
     }
     vector<GDLToken> rule_tokens;
     GDLTokenizer::tokenize(argv[1], rule_tokens);
-    //cerr << root.to_string() << endl;
-    for (const auto &token: rule_tokens) {
-        cerr << token.to_nice_string() + "\n";
-    }
-    cerr << "XXXX" << endl;
+//    for (const auto &token: rule_tokens) {
+//        cerr << token.to_nice_string() + "\n";
+//    }
+//    cerr << "XXXX" << endl;
     vector<HighNode> rules = HighNode::generate_from_tokens(rule_tokens); 
     collect_domain_types(rules);
-    cerr << rules.size() << endl;
+//    cerr << rules.size() << endl;
     fill_domains(rules);
     print_solved_theorems(rules);
     return 0;

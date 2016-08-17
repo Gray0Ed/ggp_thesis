@@ -20,6 +20,8 @@ int main(int argc, char **argv) {
     unordered_set<string> already_printed;
     for (const auto &token: rule_tokens) {
         string nice_string = token.to_nice_string();
+        if (nice_string.find("base") != string::npos) continue;
+        if (nice_string.find("input") != string::npos) continue;
         if (regex_search(nice_string, reg_mach, reg_exp) || already_printed.count(nice_string) > 0) {
             continue;
         }

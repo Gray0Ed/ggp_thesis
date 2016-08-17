@@ -43,7 +43,7 @@ struct GDLToken {
     //    return sub[i].val;
     //}
 
-    string operator()(int i) const {
+    string operator()(size_t i) const {
         assert(sub.size() >= 0);
         assert(i < sub.size() && i >= 0);
         return sub[i].val;
@@ -69,7 +69,7 @@ struct GDLTokenizer {
         return !is_whitespace(c) && c != '(' && c != ')';
     }
 
-    int tokenize(int c, GDLToken &to_fill) {
+    size_t tokenize(size_t c, GDLToken &to_fill) {
         if (input.size() == c) return c;
         char cur = input[c];
         if (cur == '(') {
@@ -80,7 +80,7 @@ struct GDLTokenizer {
         } else if (is_whitespace(cur)) {
             return tokenize(c + 1, to_fill);
         } else {
-            int s = c;
+            size_t s = c;
             while (c < input.size() && is_name_char(input[c])) {
                 ++c;
             }

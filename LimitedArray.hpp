@@ -1,5 +1,5 @@
 #include <cassert>
-template <typename T, int MAX_SZ>
+template <typename T, size_t MAX_SZ>
 struct LimitedArray {
     T items[MAX_SZ];
     size_t size;
@@ -28,28 +28,28 @@ struct LimitedArray {
 
     LimitedArray(const LimitedArray<T, MAX_SZ> &la) {
         size = la.size;
-        for (int i = 0; i < size; ++i) items[i] = la.items[i];
+        for (size_t i = 0; i < size; ++i) items[i] = la.items[i];
     }
 
     LimitedArray<T, MAX_SZ> &operator=(const LimitedArray<T, MAX_SZ> &la) {
         size = la.size;
-        for (int i = 0; i < size; ++i) items[i] = la.items[i];
+        for (size_t i = 0; i < size; ++i) items[i] = la.items[i];
         return *this;
     }
 
     bool operator==(const LimitedArray<T, MAX_SZ> &la) const {
         if (la.size != size) return false;
 
-        for (int i = 0; i < size; ++i) {
+        for (size_t i = 0; i < size; ++i) {
             if (la[i] != items[i]) return false;
         }
         return true;
     }
 
     bool operator<(const LimitedArray<T, MAX_SZ> &la) const {
-        int mins = size;
+        size_t mins = size;
         if (la.size < size) mins = la.size;
-        for (int i = 0; i < mins; ++i) {
+        for (size_t i = 0; i < mins; ++i) {
             if (items[i] < la[i]) return true;
             if (items[i] > la[i]) return false;
         }
@@ -57,14 +57,14 @@ struct LimitedArray {
         return size < la.size;
     }
 
-    T &operator[](int i) {
+    T &operator[](size_t i) {
         assert(size >= 0);
         assert(size <= MAX_SZ);
         assert(i < size && i >= 0);
         return items[i];
     }
 
-    T operator[](int i) const {
+    T operator[](size_t i) const {
         assert(size >= 0);
         assert(size <= MAX_SZ);
         assert(i < size && i >= 0);
@@ -98,16 +98,18 @@ struct LimitedArray {
         return back(0);
     }
 
-    T &back(int i) {
+    T &back(size_t i) {
+        assert(i < size);
         return (*this)[size - 1 - i];
     }
 
-    T &back(int i) const {
+    T &back(size_t i) const {
+        assert(i < size);
         return (*this)[size - 1 - i];
     }
 
     bool contains(const T& value) const {
-        for (int i = 0; i < size; ++i) {
+        for (size_t i = 0; i < size; ++i) {
             if (items[i] == value) return true;
         }
         return false;
