@@ -1,10 +1,17 @@
+#pragma once
 #include <cassert>
-template <typename T, size_t MAX_SZ>
-struct LimitedArray {
-    T items[MAX_SZ];
+
+template <typename T>
+struct SizedArray {
+    T *items;
     size_t size;
     typedef T* Iterator;
     typedef const T* ConstIterator;
+
+    void set_items(T *_items, size_t _size) {
+        items = _items;
+        size = _size;
+    }
 
     Iterator begin() {
         return items + 0;
@@ -22,22 +29,25 @@ struct LimitedArray {
         return items + size;
     }
 
-    LimitedArray() {
+    SizedArray() {
         size = 0;
+        items = 0;
     }
 
-    LimitedArray(const LimitedArray<T, MAX_SZ> &la) {
+    SizedArray(const SizedArray<T> &la) {
+        assert(size >= la.size);
         size = la.size;
         for (size_t i = 0; i < size; ++i) items[i] = la.items[i];
     }
 
-    LimitedArray<T, MAX_SZ> &operator=(const LimitedArray<T, MAX_SZ> &la) {
+    SizedArray<T> &operator=(const SizedArray<T> &la) {
+        assert(size >= la.size);
         size = la.size;
         for (size_t i = 0; i < size; ++i) items[i] = la.items[i];
         return *this;
     }
 
-    bool operator==(const LimitedArray<T, MAX_SZ> &la) const {
+    bool operator==(const SizedArray<T> &la) const {
         if (la.size != size) return false;
 
         for (size_t i = 0; i < size; ++i) {
@@ -46,7 +56,7 @@ struct LimitedArray {
         return true;
     }
 
-    bool operator<(const LimitedArray<T, MAX_SZ> &la) const {
+    bool operator<(const SizedArray<T> &la) const {
         size_t mins = size;
         if (la.size < size) mins = la.size;
         for (size_t i = 0; i < mins; ++i) {
@@ -59,35 +69,14 @@ struct LimitedArray {
 
     T &operator[](size_t i) {
         assert(size >= 0);
-        assert(size <= MAX_SZ);
         assert(i < size && i >= 0);
         return items[i];
     }
 
     T operator[](size_t i) const {
         assert(size >= 0);
-        assert(size <= MAX_SZ);
         assert(i < size && i >= 0);
         return items[i];
-    }
-
-    void resize(size_t new_size) {
-        assert(new_size <= MAX_SZ);
-        size = new_size;
-    }
-
-    void grow() {
-        resize(size + 1);
-    }
-
-    void pop() {
-        assert(size > 0);
-        resize(size - 1);
-    }
-
-    void append(const T& t) {
-        assert(size < MAX_SZ);
-        items[size++] = t;
     }
 
     T &back() {
@@ -113,5 +102,45 @@ struct LimitedArray {
             if (items[i] == value) return true;
         }
         return false;
+    }
+};
+
+template <typename T, int MAX_SZ>
+struct LimitedArray: public SizedArray<T> {
+    T items[MAX_SZ + 1];
+
+    LimitedArray() {
+        set_items(items, 0);
+    }
+
+    void resize(size_t new_size) {
+        assert(new_size <= MAX_SZ);
+        size = new_size;
+    }
+
+    void grow() {
+        resize(size + 1);
+    }
+
+    void pop() {
+        assert(size > 0);
+        resize(size - 1);
+    }
+
+    void append(const T& t) {
+        assert(size < MAX_SZ);
+        items[size++] = t;
+    }
+
+    LimitedArray(const LimitedArray<T, MAX_SZ> &la) {
+        size = la.size;
+        for (size_t i = 0; i < size; ++i) items[i] = la.items[i];
+    }
+
+    LimitedArray<T, MAX_SZ> &operator=(const LimitedArray<T, MAX_SZ> &la) {
+        assert(size >= la.size);
+        size = la.size;
+        for (size_t i = 0; i < size; ++i) items[i] = la.items[i];
+        return *this;
     }
 };
