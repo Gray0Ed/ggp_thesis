@@ -25,19 +25,14 @@ namespace backward {
 #include "MyArrays.hpp"
 #include "GDLTokenizer.hpp"
 #include "common.hpp"
-#include "Aligner.hpp"
+#include "aligner.hpp"
 
 using namespace std;
 
-const int MAX_DOMAIN_VARS = 80;
-const int MAX_SENTENCES_IN_THEOREM = 15;
-const int MAX_TERMS_N = 10000;
-
-hash<string> str_hasher;
 
 unordered_map<size_t, Domain*> domain_map;
-unordered_map<string, int> numeric_rename;
-vector<string> reverse_numeric_rename;
+unordered_map<string, int> &numeric_rename = globals().numeric_rename;
+vector<string> &reverse_numeric_rename = globals().reverse_numeric_rename;
 
 void replace_first_occurence(string &to_modify, const string &to_replace,
                              const string &replacement) {
@@ -216,7 +211,9 @@ struct HighNode {
             } else {
                 domain_type = DTYPE::SENTENCE;
             }
-            domain_map[domain_hash] = new Domain(domain_pattern, domain_type);
+            if (domain_map.count(domain_hash) == 0) {
+                domain_map[domain_hash] = new Domain(domain_pattern, domain_type);
+            }
             if (checker.count(domain_hash) == 0) {
                 checker[domain_hash] = unordered_set<string>();
             }
@@ -320,10 +317,11 @@ struct HighNode {
     AlignmentInfo alignment_info() const {
         assert(type == TYPE::THEOREM);
         AlignmentInfo res;
-        res.destination_theorem = domain_hash;
-        res.destination_sentence = sub[0].domain_hash;
+        res.destination_theorem = domain_map[domain_hash];
+        res.destination_sentence = domain_map[sub[0].domain_hash];
         res.sources_new_valuations_n = 1;
         res.var_infos.size = theorem_vars_n; 
+        assert(res.source_sentences.size == 0);
         for (auto &vi: res.var_infos) {
             assert(vi.occurences.size == 0);
         }
@@ -337,6 +335,7 @@ struct HighNode {
                 sub[i].collect_distinct_info(var_infos);
             } else if (sub_svalue != "not") {
                 res.source_sentences.append(domain_map[sub[i].domain_hash]);
+                assert(res.source_sentences.back());
                 res.sources_new_valuations_n += domain_map[sub[i].domain_hash]->valuations.size();
                 res.source_constraints.grow();
                 sub[i].fill_var_constraints(res.source_constraints.back());
@@ -381,10 +380,18 @@ void collect_initial_valuations(const vector<HighNode> &rules){
 
 void collect_alignment_infos(const vector<HighNode> &rules, vector<AlignmentInfo> &res) {
     res.resize(0);
-    res.reserve(100);
     for (const auto &hn: rules) {
         if (hn.type == TYPE::THEOREM) {
-            res.push_back(hn.alignment_info());
+            AlignmentInfo ai = hn.alignment_info();
+            res.push_back(ai);
+            // TODO remove asserts
+            assert(ai.source_sentences == res.back().source_sentences);
+            for (const auto &sv: ai.source_sentences) {
+                assert(sv);
+            }
+            for (const auto &sv: res.back().source_sentences) {
+                assert(sv);
+            }
             //cerr << res.back().sources_new_valuations_n << endl;
             //cerr << hn.domain_pattern << endl;
             //cerr << domain_map[hn.sub[0].domain_hash].to_string();
@@ -434,5 +441,8 @@ int main(int argc, char **argv) {
 //    cerr << rules.size() << endl;
     fill_domains(rules);
     print_solved_theorems(rules);
+    for (const auto &fo: domain_map) {
+        delete fo.second;
+    }
     return 0;
 }

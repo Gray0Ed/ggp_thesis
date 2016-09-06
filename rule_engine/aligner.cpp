@@ -1,5 +1,6 @@
-#include "Aligner.hpp"
+#include "aligner.hpp"
 #include <iostream>
+
 static _Aligner ali;
 
 template<typename T>
@@ -9,7 +10,7 @@ static void uniquefy(vector<T> &v) {
     v.erase(last, v.end());
 }
 
-void fix_point_align(const vector<AlignmentInfo> &to_align) {
+void fix_point_align(vector<AlignmentInfo> &to_align) {
    int total_valuations_found = 0;
    while ("Elvis Lives") {
        size_t to_be_processed_index = 0;
@@ -26,9 +27,9 @@ void fix_point_align(const vector<AlignmentInfo> &to_align) {
 
        Domain &sentence = *to_be_processed.destination_sentence;
        Domain &theorem = *to_be_processed.destination_theorem;
-       cerr << "doing: " << theorem.pattern << endl;
+       //cerr << "doing: " << theorem.pattern << endl;
 
-       ali.find_valuations(to_be_processed);
+       ali.find_valuations(&to_be_processed);
        auto &tv = theorem.valuations;
        tv.insert(tv.end(), 
             ali.new_valuations.begin(), ali.new_valuations.end());
@@ -36,19 +37,19 @@ void fix_point_align(const vector<AlignmentInfo> &to_align) {
        auto &sv = sentence.valuations;
        int old_valuations_n = sv.size();
        for (auto &new_valuation: ali.new_valuations) {
-           new_valuation.resize(ds.valuation_size);
+           new_valuation.resize(sentence.valuation_size);
            sv.push_back(new_valuation);
        }
        uniquefy(sv);
        to_be_processed.sources_new_valuations_n = 0;
        int valuations_n_delta = sv.size() - old_valuations_n;
        total_valuations_found += valuations_n_delta;
-       cerr << "new valuations n: " << valuations_n_delta << endl;
-       cerr << "total valuations n: " << total_valuations_found << endl;
+       //cerr << "new valuations n: " << valuations_n_delta << endl;
+       //cerr << "total valuations n: " << total_valuations_found << endl;
       // cerr << "resulting theorem valuations: \n" << theorem.to_full_string() << endl;
        //cerr << "resulting domain valuations: \n" << sentence.to_full_string() << endl;
        for (auto &ai: to_align) {
-           if (ai.source_sentences.contains(sentence.id)) {
+           if (ai.source_sentences.contains(&sentence)) {
                ai.sources_new_valuations_n += valuations_n_delta;
            }
        }
@@ -57,6 +58,8 @@ void fix_point_align(const vector<AlignmentInfo> &to_align) {
 
 bool _Aligner::prepare_indices() {
     indices.resize(sentences_n());
+    indices_memory_bank.grow();
+    assert(indices_memory_bank.size == 1);
     for (int sentence_i = 0; sentence_i < sentences_n(); ++sentence_i) {
         int valuation_index = 0;
         auto &sindices = indices[sentence_i];
@@ -109,6 +112,9 @@ void _Aligner::split_by_var(int split_by_var_id) {
     auto &mindices = indices[moccurence.sentence];
     auto &mvaluation_set = *sources_valuations[moccurence.sentence];
     auto &mindex = processed_index[moccurence.sentence];
+    for (int i = 0; i < sentences_n(); ++i) {
+        assert((size_t)input_bounds[i].second <= indices[i].size);
+    }
     while (mindex < mbound.second) {
         const int value = 
             mvaluation_set[mindices[mindex]][moccurence.index];
@@ -131,17 +137,20 @@ void _Aligner::split_by_var(int split_by_var_id) {
             int &pi = processed_index[occurence.sentence];
             const auto &bound = input_bounds[occurence.sentence];
             assert(bound.first != bound.second);
+            assert((size_t)bound.second <= indices[occurence.sentence].size);
             auto &sindices = indices[occurence.sentence];
             auto &valuation_set = *sources_valuations[occurence.sentence];
-            while (pi < bound.second && sources_valuations[sindices[pi]][occurence.index] < value) ++pi;
+            while (pi < bound.second && valuation_set[sindices[pi]][occurence.index] < value) ++pi;
             auto sub_bound = make_pair(pi, pi);
-            while (pi < bound.second && sources_valuations[sindices[pi]][occurence.index] == value) ++pi;
+            //cerr << "hello again sJ\n" << occurence.index << " " << valuation_set[sindices[pi]].size << endl;
+            //cerr << bound.second << " " << valuation_set.size() << " " << sindices.size << endl;
+            while (pi < bound.second && valuation_set[sindices[pi]][occurence.index] == value) ++pi;
             sub_bound.second = pi;
             if (sub_bound.second == sub_bound.first) {
                 bad = true;
                 break;
             }
-            bounds_stack.back()[occurence.sentence] = sub_bound;
+            ib_to_fill[occurence.sentence] = sub_bound;
         }
         if (bad) {
             bounds_stack.pop();
@@ -150,6 +159,8 @@ void _Aligner::split_by_var(int split_by_var_id) {
                 if (ib_to_fill[sentence_i].first == -1) {
                     ib_to_fill[sentence_i] = input_bounds[sentence_i];
                 }
+                assert(ib_to_fill[sentence_i].first >= 0 && ib_to_fill[sentence_i].second >= 0);
+                assert((size_t)ib_to_fill[sentence_i].second <= indices[sentence_i].size);
             }
         }
     }
@@ -164,6 +175,8 @@ void _Aligner::initialize_banned_var_values() {
 
 void _Aligner::ban_by_var(int var_id) {
     const auto &oc = ai->var_infos[var_id].occurences[0];
+    assert(&oc == &ai->var_infos[var_id].occurences[0]);
+    cerr << oc.sentence << " " << ai->var_infos[var_id].occurences[0].sentence << endl;
     const auto &bound = bounds_stack.back()[oc.sentence];
     assert(bound.first < bound.second);
     const int value = sources_valuations[oc.sentence]->at(
@@ -207,11 +220,12 @@ void _Aligner::compute() {
     for (int i = 0; i < sentences_n(); ++i) {
         bounds_stack[0].append(make_pair(0, (int)indices[i].size));
     }
+    //print_bounds_stack();
     split_by_var(ai->binding_order[0]);
     LimitedArray<int, MAX_DOMAIN_VARS> level_size;
     level_size.append(bounds_stack.size);
     //cerr << "boom" << endl;
-    
+    //print_bounds_stack();
 
     while ("Elvis Lives") {
         //cerr << "baam" << endl;
@@ -224,6 +238,7 @@ void _Aligner::compute() {
             }
         }
         if (level_size.size == 0) break;
+        //print_bounds_stack();
         const int level_id = level_size.size - 1;
         assert(level_size.back() > 0);
         --level_size.back();
@@ -260,4 +275,14 @@ void _Aligner::compute() {
             level_size.append(bounds_stack.size - base);
         }
     }
+}
+
+void _Aligner::print_bounds_stack() {
+    for (const auto &bo: bounds_stack) {
+        for (const auto &p: bo) {
+            cerr << p.first << "/" << p.second << " ";
+        }
+        cerr << "\n";
+    }
+    cerr << endl;
 }

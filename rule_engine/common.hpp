@@ -1,5 +1,8 @@
 #pragma once
-#include "LimitedArray.hpp"
+#include "MyArrays.hpp"
+#include <unordered_map>
+#include <vector>
+using namespace std;
 
 const int MAX_DOMAIN_VARS = 80;
 const int MAX_SENTENCES_IN_THEOREM = 15;
@@ -21,3 +24,18 @@ typedef LimitedArray<short, MAX_DOMAIN_VARS> DomainValuation;
         }\
     }
 
+
+inline size_t str_hasher(const string &s) {
+    static hash<string> hasher;
+    return hasher(s);
+}
+
+struct Globals {
+    unordered_map<string, int> numeric_rename;
+    vector<string> reverse_numeric_rename;
+};
+
+inline Globals &globals() {
+    static Globals g;
+    return g;
+}
