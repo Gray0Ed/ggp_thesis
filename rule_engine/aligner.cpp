@@ -175,8 +175,6 @@ void _Aligner::initialize_banned_var_values() {
 
 void _Aligner::ban_by_var(int var_id) {
     const auto &oc = ai->var_infos[var_id].occurences[0];
-    assert(&oc == &ai->var_infos[var_id].occurences[0]);
-    cerr << oc.sentence << " " << ai->var_infos[var_id].occurences[0].sentence << endl;
     const auto &bound = bounds_stack.back()[oc.sentence];
     assert(bound.first < bound.second);
     const int value = sources_valuations[oc.sentence]->at(

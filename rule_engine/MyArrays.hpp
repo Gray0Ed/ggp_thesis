@@ -74,7 +74,7 @@ struct SizedArray {
         return items[i];
     }
 
-    T operator[](size_t i) const {
+    const T &operator[](size_t i) const {
         assert(size >= 0);
         assert(i < size && i >= 0);
         return items[i];
@@ -84,7 +84,7 @@ struct SizedArray {
         return back(0);
     }
 
-    T &back() const {
+    const T &back() const {
         return back(0);
     }
 
@@ -214,7 +214,7 @@ struct LimitedArray: public SizedArray<T> {
         return items[i];
     }
 
-    T operator[](size_t i) const {
+    const T &operator[](size_t i) const {
         assert(size >= 0);
         assert(i < size && i >= 0);
         return items[i];
@@ -224,7 +224,7 @@ struct LimitedArray: public SizedArray<T> {
         return back(0);
     }
 
-    T &back() const {
+    const T &back() const {
         return back(0);
     }
 
@@ -233,7 +233,7 @@ struct LimitedArray: public SizedArray<T> {
         return (*this)[size - 1 - i];
     }
 
-    T &back(size_t i) const {
+    const T &back(size_t i) const {
         assert(i < size);
         return (*this)[size - 1 - i];
     }
