@@ -126,7 +126,7 @@ struct HighNode {
                 value = renamed;
             }
         } else if (t(0) == "<=") {
-            assert(t.sub.size() >= 3);
+            assert(t.sub.size() >= 2);
             assert(induced_type == TYPE::NONE);
             type = TYPE::THEOREM;
             sub.resize(t.sub.size() - 1);
@@ -135,6 +135,8 @@ struct HighNode {
                 contains_variable = contains_variable || sub[i - 1].contains_variable;
             }
             theorem_vars_n = var_mapping.size();
+            // assuming that init expression doesn't require reasoning
+            assert(t(1) != "init" || (t(1) == "init" && t.sub.size() == 2));
         } else {
             if (induced_type == TYPE::TUPLE) {
                 type = TYPE::TUPLE;
@@ -166,26 +168,31 @@ struct HighNode {
         return res;
     }
 
-    string assign_domain_hash_and_pattern(unordered_map<size_t, unordered_set<string>> & checker) {
+    pair<string, string> assign_domain_hash_and_pattern(
+            unordered_map<size_t, unordered_set<string>> & checker) {
         string res;
+        string ores; //without replaced next, init, legal
         if (type != TYPE::THEOREM) {
             res = reverse_numeric_rename[value];
+        } else {
+            res = "( <=";
         }
+        ores = res;
         if (res == "next" || res == "init") {
             res = "true";
         }
         if (res == "legal") {
             res = "does";
         }
-        if (type == TYPE::THEOREM) {
-            res = "( <=" + res;
-        }
         bool first_done = false;
         for (HighNode &hn: sub) {
             if (hn.type == TYPE::VAR || hn.type == TYPE::CONST) {
                 res += " #";
+                ores += " #";
             } else if (hn.type == TYPE::SENTENCE || hn.type == TYPE::TUPLE) {
-                res += " ( " + hn.assign_domain_hash_and_pattern(checker) + " )";
+                auto sub_pattern = hn.assign_domain_hash_and_pattern(checker);
+                res += " ( " + sub_pattern.first + " )";
+                ores += " ( " + sub_pattern.second + " )";
             } else {
                 cerr << debug_token.to_string() << endl;
                 cerr << hn.type << " " << hn.debug_token.to_string() << endl;
@@ -194,12 +201,11 @@ struct HighNode {
             if (type == TYPE::THEOREM && !first_done) {
                 first_done = true;
                 assert(hn.type == TYPE::SENTENCE);
-                replace_first_occurence(res, "true", "next");
-                replace_first_occurence(res, "does", "legal");
             }
         }
         if (type == TYPE::THEOREM) {
             res += " )";
+            ores += " )";
         }
         assert(type == TYPE::THEOREM || type == TYPE::SENTENCE || type == TYPE::TUPLE);
         if (type != TYPE::TUPLE) {
@@ -212,7 +218,8 @@ struct HighNode {
                 domain_type = DTYPE::SENTENCE;
             }
             if (domain_map.count(domain_hash) == 0) {
-                domain_map[domain_hash] = new Domain(domain_pattern, domain_type);
+                domain_map[domain_hash] = new Domain(
+                        domain_pattern, ores, domain_type);
             }
             if (checker.count(domain_hash) == 0) {
                 checker[domain_hash] = unordered_set<string>();
@@ -220,9 +227,7 @@ struct HighNode {
             checker[domain_hash].insert(domain_pattern);
             assert(domain_map[domain_hash]->id == domain_hash);
         }
-        assert(type == TYPE::THEOREM || (res.find("next") == string::npos && 
-               res.find("legal") == string::npos && res.find("init") == string::npos));
-        return res;
+        return make_pair(res, ores);
     }
 
     void gather_base_valuations_from_consts(DomainValuation &to_fill) const {
@@ -406,8 +411,9 @@ void fill_domains(const vector<HighNode> &rules) {
     fix_point_align(alignment_infos);
 }
 
-void print_solved_theorems(const vector<HighNode> &rules) {
+void print_solved_theorems(const vector<HighNode> &rules, const string &outf_name) {
     unordered_set<string> printed_strings;
+    ofstream output_file(outf_name);
     for (auto &rule: rules) {
         string to_print;
         const auto &dom = *domain_map[rule.domain_hash]; 
@@ -419,15 +425,14 @@ void print_solved_theorems(const vector<HighNode> &rules) {
         }
         if (printed_strings.count(to_print) == 0) {
             printed_strings.insert(to_print);
-            cout << to_print;
+            output_file << to_print;
         }
     }
 }
 
-
 int main(int argc, char **argv) {
     if (argc < 2) {
-        cerr << "no input provided" << endl;
+        cerr << "Usage:\n" << argv[0] << " INPUT OUTPUT" << endl;
         return 1;
     }
     vector<GDLToken> rule_tokens;
@@ -437,10 +442,13 @@ int main(int argc, char **argv) {
 //    }
 //    cerr << "XXXX" << endl;
     vector<HighNode> rules = HighNode::generate_from_tokens(rule_tokens); 
+    for (const auto &rule: rules) {
+        assert(rule.type == TYPE::THEOREM);
+    }
     collect_domain_types(rules);
 //    cerr << rules.size() << endl;
     fill_domains(rules);
-    print_solved_theorems(rules);
+    print_solved_theorems(rules, argv[2]);
     for (const auto &fo: domain_map) {
         delete fo.second;
     }

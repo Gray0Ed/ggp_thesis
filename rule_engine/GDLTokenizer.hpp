@@ -19,17 +19,25 @@ struct GDLToken {
         return res;
     }
 
-    string to_nice_string() const {
+    string to_nice_string(bool is_top=true) const {
         string res = val;
         if (!sub.empty()) {
             assert(res == "");
             res = "(";
         }
         for (const auto &subt: sub) {
-            res += " " + subt.to_nice_string();
+            res += " " + subt.to_nice_string(false);
         }
         if (!sub.empty()) {
             res += " )";
+        }
+        if (is_top && sub.size() == 0) {
+            cerr << val << endl;
+        }
+        assert(!is_top || sub.size() > 0);
+        if (is_top && sub[0].val != "<=") {
+            return "( <= " + res + " )"; // every top level rules should be
+                                         // presented as theorem
         }
         return res;
     }

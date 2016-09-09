@@ -42,13 +42,15 @@ namespace DTYPE {
 struct Domain {
     size_t id; // hash of the pattern
     int type; // 
-    string pattern;
+    string pattern; // next and init are replaced by true, legal by does
+    string original_pattern; // pattern 
     vector<DomainValuation> valuations;
     int valuation_size;
     Domain(){}
-    Domain(string _pattern, int _type) {
+    Domain(string _pattern, string _original_pattern, int _type) {
         type = _type;
         pattern = _pattern;
+        original_pattern = _original_pattern;
         id = str_hasher(pattern);
         valuation_size = count(pattern.begin(), pattern.end(), '#');
         assert(valuation_size <= MAX_DOMAIN_VARS);
@@ -76,7 +78,7 @@ struct Domain {
     string to_string_with_valuation(const DomainValuation &valuation) const {
         string res;
         int i = 0;
-        for (char c: pattern) {
+        for (char c: original_pattern) {
             string to_append;
             if (c == '#') {
                 to_append = globals().reverse_numeric_rename[valuation[i]];
