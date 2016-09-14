@@ -75,6 +75,13 @@ struct HighNode {
     bool contains_variable;
     GDLToken debug_token;
     vector<HighNode> sub;
+    int max_sub_size, max_theorem_vars_n;
+
+    HighNode() {
+        max_sub_size = 0;
+        max_theorem_vars_n = 0;
+        theorem_vars_n = 0;
+    }
 
     string to_string() const {
         string res = "(";
@@ -155,16 +162,27 @@ struct HighNode {
             }
         }
         assert(type != TYPE::NONE);
+        max_sub_size = max(max_sub_size, (int)sub.size());
+        max_theorem_vars_n = theorem_vars_n;
+        for (size_t i = 0; i < sub.size(); ++i) {
+            max_sub_size = max(max_sub_size, sub[i].max_sub_size);
+            max_theorem_vars_n = max(sub[i].max_theorem_vars_n, max_theorem_vars_n);
+        }
     }
 
     static vector<HighNode> generate_from_tokens(const vector<GDLToken> &tokens) {
         vector<HighNode> res;
         res.reserve(tokens.size());
+        int max_sentences = 0;
+        int max_vars = 0;
         for (auto &tok: tokens) {
             unordered_map<int, int> var_mapping;
             res.push_back(HighNode());
             res.back().fill_from_token(tok, var_mapping);
+            max_vars = max(max_vars, res.back().max_theorem_vars_n);
+            max_sentences = max(max_sentences, res.back().max_sub_size);
         }
+        cerr << "MAX SENTENCES: " << max_sentences << "\nMAX VARS: " << max_vars << endl;
         return res;
     }
 
@@ -319,6 +337,44 @@ struct HighNode {
         }
     }
 
+    void fill_key_occurences(AlignmentVarInfo &var_info) const {
+        if (var_info.occurences.size == 0) return;
+        sort(var_info.occurences.begin(), var_info.occurences.end(), 
+                [](const VarOccurence &va, const VarOccurence &vb) -> bool {
+                    return va.sentence < vb.sentence;
+                });
+        var_info.key_occurences = var_info.occurences;
+        auto last = unique(var_info.key_occurences.begin(), var_info.key_occurences.end());
+        while (&var_info.key_occurences.back() + 1 != last) {
+            var_info.key_occurences.pop();
+        }
+    }
+
+    void fill_var_equivalence(AlignmentInfo &ai) const {
+        ai.var_equivalence.resize(ai.source_sentences.size);
+        for (size_t sentence_i = 0; sentence_i < ai.source_sentences.size; ++sentence_i) {
+            ai.var_equivalence[sentence_i].resize(
+                ai.source_sentences[sentence_i]->valuation_size);
+            for (int v = 0; v < (int)ai.var_equivalence[sentence_i].size; ++v) {
+                ai.var_equivalence[sentence_i][v] = v;
+            }
+        }
+
+        for (const auto &vi: ai.var_infos) {
+            assert(vi.occurences.size > 0);
+            int current_sentence = vi.occurences[0].sentence;
+            int first_index = vi.occurences[0].index;
+            ai.var_equivalence[current_sentence][vi.occurences[0].index] = first_index;
+            for (size_t oc_i = 1; oc_i < vi.occurences.size; ++oc_i) {
+                if (vi.occurences[oc_i].sentence != current_sentence) {
+                    current_sentence = vi.occurences[oc_i].sentence;
+                    first_index = vi.occurences[oc_i].index;
+                }
+                ai.var_equivalence[current_sentence][vi.occurences[oc_i].index] = first_index;
+            }
+        }
+    }
+
     AlignmentInfo alignment_info() const {
         assert(type == TYPE::THEOREM);
         AlignmentInfo res;
@@ -359,6 +415,10 @@ struct HighNode {
                 return var_infos[a].occurences.size > var_infos[b].occurences.size;
             }
         );
+        for (auto &vi: res.var_infos) {
+            fill_key_occurences(vi);
+        }
+        fill_var_equivalence(res);
         return res;
     }
 };
@@ -408,12 +468,14 @@ void fill_domains(const vector<HighNode> &rules) {
     collect_initial_valuations(rules);
     vector<AlignmentInfo> alignment_infos;
     collect_alignment_infos(rules, alignment_infos);
+    cerr << "starting fix point align" << endl;
     fix_point_align(alignment_infos);
 }
 
 void print_solved_theorems(const vector<HighNode> &rules, const string &outf_name) {
     unordered_set<string> printed_strings;
     ofstream output_file(outf_name);
+    cerr << "printing..." << endl;
     for (auto &rule: rules) {
         string to_print;
         const auto &dom = *domain_map[rule.domain_hash]; 
@@ -449,6 +511,20 @@ int main(int argc, char **argv) {
 //    cerr << rules.size() << endl;
     fill_domains(rules);
     print_solved_theorems(rules, argv[2]);
+    int legal_counter = 0;
+    int true_counter = 0;
+    for (const auto &dit: domain_map) {
+        const auto &dom = *dit.second;
+        if (dom.type == DTYPE::SENTENCE) {
+            if (dom.pattern.substr(0, 5) == "does ") {
+                legal_counter += dom.valuations.size();
+            }
+            if (dom.pattern.substr(0, 5) == "true ") {
+                true_counter += dom.valuations.size();
+            }
+        }
+    }
+    cerr << "LEGALS: " << legal_counter << " " << "NEXTS: " << true_counter << endl;
     for (const auto &fo: domain_map) {
         delete fo.second;
     }

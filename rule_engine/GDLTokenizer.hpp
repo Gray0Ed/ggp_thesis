@@ -3,6 +3,7 @@
 #include <cctype>
 #include <fstream>
 #include <cassert>
+#include <iostream>
 
 using namespace std;
 
@@ -79,24 +80,40 @@ struct GDLTokenizer {
     }
 
     size_t tokenize(size_t c, GDLToken &to_fill) {
-        if (input.size() == c) return c;
-        char cur = input[c];
-        if (cur == '(') {
-            to_fill.sub.push_back(GDLToken());
-            return tokenize(tokenize(c + 1, to_fill.sub.back()), to_fill);
-        } else if (cur == ')') {
-            return c + 1;
-        } else if (is_whitespace(cur)) {
-            return tokenize(c + 1, to_fill);
-        } else {
-            size_t s = c;
-            while (c < input.size() && is_name_char(input[c])) {
-                ++c;
+        struct AfterPrint {
+            size_t to_print;
+            ~AfterPrint() {
+                cerr << to_print << "\n";
             }
-            to_fill.sub.push_back(GDLToken());
-            to_fill.sub.back().val = input.substr(s, c - s);
-            return tokenize(c, to_fill);
+            AfterPrint(size_t _tp) {
+                to_print = _tp;
+            }
+        };
+        //AfterPrint ap(c);
+        //cerr << c << "\n";
+
+        while (true) {
+            if (input.size() == c) return c;
+            assert(input.size() > c);
+            char cur = input[c];
+            if (cur == '(') {
+                to_fill.sub.push_back(GDLToken());
+                c = tokenize(c + 1, to_fill.sub.back());
+                continue;
+            } else if (cur == ')') {
+                return c + 1;
+            } else if (is_whitespace(cur)) {
+                c += 1;
+            } else {
+                size_t s = c;
+                while (c < input.size() && is_name_char(input[c])) {
+                    ++c;
+                }
+                to_fill.sub.push_back(GDLToken());
+                to_fill.sub.back().val = input.substr(s, c - s);
+            }
         }
+        assert(0);
     }
 
     static void tokenize(const string &input_path, vector<GDLToken> &result) {

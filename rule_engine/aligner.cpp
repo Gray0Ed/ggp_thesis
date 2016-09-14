@@ -11,7 +11,8 @@ static void uniquefy(vector<T> &v) {
 }
 
 void fix_point_align(vector<AlignmentInfo> &to_align) {
-   int total_valuations_found = 0;
+   int theorem_valuations_found = 0;
+   int sentence_valuations_found = 0;
    while ("Elvis Lives") {
        size_t to_be_processed_index = 0;
        for (size_t i = 0; i < to_align.size(); ++i) {
@@ -27,30 +28,34 @@ void fix_point_align(vector<AlignmentInfo> &to_align) {
 
        Domain &sentence = *to_be_processed.destination_sentence;
        Domain &theorem = *to_be_processed.destination_theorem;
-       //cerr << "doing: " << theorem.pattern << endl;
+       cerr << "doing: " << theorem.pattern << endl;
 
        ali.find_valuations(&to_be_processed);
+       cerr << "valuations found: " << ali.new_valuations.size() << endl;
        auto &tv = theorem.valuations;
+       int old_tvaluations_n = tv.size();
        tv.insert(tv.end(), 
             ali.new_valuations.begin(), ali.new_valuations.end());
        uniquefy(tv);
+       theorem_valuations_found += tv.size() - old_tvaluations_n;
        auto &sv = sentence.valuations;
-       int old_valuations_n = sv.size();
+       int old_svaluations_n = sv.size();
        for (auto &new_valuation: ali.new_valuations) {
            new_valuation.resize(sentence.valuation_size);
            sv.push_back(new_valuation);
        }
        uniquefy(sv);
        to_be_processed.sources_new_valuations_n = 0;
-       int valuations_n_delta = sv.size() - old_valuations_n;
-       total_valuations_found += valuations_n_delta;
+       int svaluations_n_delta = sv.size() - old_svaluations_n;
+       sentence_valuations_found += svaluations_n_delta;
        //cerr << "new valuations n: " << valuations_n_delta << endl;
-       //cerr << "total valuations n: " << total_valuations_found << endl;
+       if (sentence_valuations_found % 100 == 0) cerr << "sv: " << sentence_valuations_found << endl;
+       if (theorem_valuations_found % 100 == 0)  cerr << "tv: " << theorem_valuations_found << endl;
       // cerr << "resulting theorem valuations: \n" << theorem.to_full_string() << endl;
        //cerr << "resulting domain valuations: \n" << sentence.to_full_string() << endl;
        for (auto &ai: to_align) {
            if (ai.source_sentences.contains(&sentence)) {
-               ai.sources_new_valuations_n += valuations_n_delta;
+               ai.sources_new_valuations_n += svaluations_n_delta;
            }
        }
    }
@@ -63,11 +68,20 @@ bool _Aligner::prepare_indices() {
     for (int sentence_i = 0; sentence_i < sentences_n(); ++sentence_i) {
         int valuation_index = 0;
         auto &sindices = indices[sentence_i];
+        const auto &svequivalence = ai->var_equivalence[sentence_i];
+
         sindices.set_items(&indices_memory_bank.back(), 0);
         for (const auto &valuation: (*sources_valuations[sentence_i])) {
+            assert(svequivalence.size == valuation.size);
             bool bad = false;
             for (const auto &var_constraint: ai->source_constraints[sentence_i]) {
                 if (valuation[var_constraint.index] != var_constraint.value) {
+                    bad = true;
+                    break;
+                }
+            }
+            for (size_t v_i = 0; v_i < valuation.size; ++v_i) {
+                if (valuation[v_i] != valuation[svequivalence[v_i]]) {
                     bad = true;
                     break;
                 }
@@ -86,7 +100,7 @@ bool _Aligner::prepare_indices() {
 }
 
 void _Aligner::split_by_var(int split_by_var_id) {
-    const auto &occurences = ai->var_infos[split_by_var_id].occurences;
+    const auto &occurences = ai->var_infos[split_by_var_id].key_occurences;
     const auto &banned_values = banned_var_values[split_by_var_id];
     const IndexBound input_bounds = bounds_stack.back();
     bounds_stack.pop();
@@ -151,6 +165,8 @@ void _Aligner::split_by_var(int split_by_var_id) {
                 break;
             }
             ib_to_fill[occurence.sentence] = sub_bound;
+            assert(valuation_set[sindices[sub_bound.first]][occurence.index] == valuation_set[sindices[sub_bound.second - 1]][occurence.index]);
+            assert(sub_bound.first >= bound.first && sub_bound.second <= bound.second);
         }
         if (bad) {
             bounds_stack.pop();
@@ -251,6 +267,30 @@ void _Aligner::compute() {
      //               cerr << oc.sentence << endl;
      //               cerr << "XOO: " << oc.index << " " << ai.var_infos[vi].occurences.size << endl;
                     const auto &ib = bounds_stack.back()[oc.sentence];
+                    if (ib.first + 1 != ib.second) {
+                        cerr << vars_n() << " " << sentences_n() << " " << level_id << endl;
+                        for (const auto &ko: bounds_stack.back()) {
+                            cerr << ko.first << "/" << ko.second << " ";
+                        }
+                        cerr << endl;
+                        for (int iit = ib.first; iit < ib.second; ++iit) {
+                            const auto &va =sources_valuations[oc.sentence]->at(
+                                    indices[oc.sentence][iit]);
+                            for (const auto &vo: va) {
+                                cerr << vo << " ";
+                            }
+                            cerr << endl;
+                        }
+                        for (const auto &vi: ai->var_infos) {
+                            for (const auto &oc: vi.occurences) {
+                                cerr << oc.sentence << "/" << oc.index << " ";
+                            }
+                            cerr << endl;
+                        }
+                        cerr << endl;
+                        cerr << bounds_stack.size << endl;
+                        print_bounds_stack();
+                    }
                     assert(ib.first + 1 == ib.second);
                     new_valuation.append(
                         sources_valuations[oc.sentence]->at(
@@ -268,8 +308,38 @@ void _Aligner::compute() {
         } else {
             //cerr << "buum" << endl;
             ban_by_var(ai->binding_order[level_id]);
+            auto last = bounds_stack.back();
             size_t base = bounds_stack.size - 1;
             split_by_var(ai->binding_order[level_id + 1]);
+            if (level_id + 1 == vars_n() - 1) {
+                for (size_t bid = base; bid < bounds_stack.size; ++bid) {
+                    for (const auto &bo: bounds_stack[bid]) {
+                        if (bo.first != bo.second - 1) {
+                            for (int vi: ai->domain_filling_pattern) {
+                                cerr << vi << " ";
+                            }
+                            cerr << endl;
+                            for (int bi = bo.first; bi < bo.second; ++bi) {
+                                const auto &va = sources_valuations[0]->at(indices[0][bi]);
+                                for (const auto &val: va) {
+                                    cerr << val << " ";
+                                }
+                                cerr << endl;
+                            }
+                            cerr << endl;
+                            for (const auto &lo: last) {
+                                cerr << lo.first << '/' << lo.second << " ";
+                            }
+                            cerr << endl;
+                            for (const auto &ko: ai->binding_order) {
+                                cerr << ko << " ";
+                            }
+                            cerr << endl;
+                        }
+                        assert(bo.first == bo.second - 1);
+                    }
+                }
+            }
             level_size.append(bounds_stack.size - base);
         }
     }

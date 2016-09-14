@@ -6,6 +6,17 @@
 #include <unordered_set>
 #include "GDLTokenizer.hpp"
 
+#ifndef NO_BACKWARD
+#define BACKWARD_HAS_DW 1
+#include "backward.hpp"
+
+namespace backward {
+    backward::SignalHandling sh;
+};
+
+#endif
+
+
 using namespace std;
 int main(int argc, char **argv) {
     smatch reg_mach;
@@ -15,7 +26,9 @@ int main(int argc, char **argv) {
         return 1;
     }
     vector<GDLToken> rule_tokens;
+    cerr << "before tokenize" << endl;
     GDLTokenizer::tokenize(argv[1], rule_tokens);
+    cerr << "after tokenize" << endl;
     vector<string> lines;
     unordered_set<string> already_printed;
     for (const auto &token: rule_tokens) {

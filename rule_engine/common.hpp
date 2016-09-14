@@ -6,7 +6,7 @@ using namespace std;
 
 const int MAX_DOMAIN_VARS = 80;
 const int MAX_SENTENCES_IN_THEOREM = 15;
-const int MAX_TERMS_N = 10000;
+const int MAX_TERMS_N = 200000;
 typedef LimitedArray<short, MAX_DOMAIN_VARS> DomainValuation;
 
 

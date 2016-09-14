@@ -19,15 +19,15 @@ out_suffix = ".stdout"
 
 input_types = [
     #('amazons', ['opt', 'dbg']),
-    ('amazons8x8', ['sancho', 'opt', 'dbg']),
+    ('amazons_8x8', ['sancho', 'opt', 'dbg']),
     ('breakthrough', ['sancho', 'opt', 'dbg']),
     ('breakthroughSmall', ['sancho', 'opt', 'dbg']),
     ('checkers', ['opt', 'dbg']),
     ('checkersSmall', ['sancho', 'opt', 'dbg']),
     ('connect4', ['sancho', 'opt', 'dbg']),
     ('connect5', ['sancho', 'opt', 'dbg']),
-    ('chess', ['opt', 'dbg']),
-    ('reversi', ['opt', 'dbg']),
+    ('chess', ['dbg', 'opt']),
+    ('reversi', ['opt', 'dbg', 'sancho']),
     ('ticTac', ['sancho', 'opt', 'dbg']),
 ]
 
@@ -68,7 +68,7 @@ def main():
         inputs = [inpt for inpt in input_types if inpt[0] in test_names]
     else:
         inputs = input_types
-    make_rule_engine()
+    #make_rule_engine()
     for inpfn, flatteners in inputs:
         inpfn = inpfn + '.kif'
         inpf = input_dir + inpfn

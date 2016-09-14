@@ -11,9 +11,12 @@ NAMED_PAIR(VarOccurence, int, sentence, int, index);
 
 struct AlignmentVarInfo {
     LimitedArray<VarOccurence, MAX_DOMAIN_VARS> occurences;
+    // one occurence per sentence
+    LimitedArray<VarOccurence, MAX_DOMAIN_VARS> key_occurences;
     LimitedArray<int, MAX_DOMAIN_VARS> different_than;
     LimitedArray<int, MAX_DOMAIN_VARS> different_than_const;
 };
+
 
 struct Domain;
 struct AlignmentInfo {
@@ -27,6 +30,9 @@ struct AlignmentInfo {
 
     // filling_pattern - negative = (-(renamed_token + 1)), positive = exp_var_id + 1
     LimitedArray<int, MAX_DOMAIN_VARS> domain_filling_pattern;
+    // one var occurence per sentence
+    LimitedArray<VarOccurence, MAX_SENTENCES_IN_THEOREM> key_occurences; 
+    LimitedArray<LimitedArray<int, MAX_DOMAIN_VARS>, MAX_SENTENCES_IN_THEOREM> var_equivalence;
 };
 
 
