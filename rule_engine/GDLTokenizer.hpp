@@ -117,9 +117,14 @@ struct GDLTokenizer {
     }
 
     static void tokenize(const string &input_path, vector<GDLToken> &result) {
-        GDLTokenizer gdl_tokenizer;
         ifstream inp(input_path);
-        gdl_tokenizer.input = string((istreambuf_iterator<char>(inp)), istreambuf_iterator<char>());
+        string input = string((istreambuf_iterator<char>(inp)), istreambuf_iterator<char>());
+        tokenize_str(input, result);
+    }
+    
+    static void tokenize_str(const string &input, vector<GDLToken> &result) {
+        GDLTokenizer gdl_tokenizer;
+        gdl_tokenizer.input = input;
         GDLToken root;
         assert(gdl_tokenizer.tokenize(0, root) == gdl_tokenizer.input.size());
         root.shorten_edges();

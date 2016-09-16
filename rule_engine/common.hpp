@@ -1,9 +1,9 @@
 #pragma once
-#include "MyArrays.hpp"
 #include <unordered_map>
 #include <vector>
 using namespace std;
 
+#include "MyArrays.hpp"
 const int MAX_DOMAIN_VARS = 80;
 const int MAX_SENTENCES_IN_THEOREM = 15;
 const int MAX_TERMS_N = 200000;
@@ -30,9 +30,11 @@ inline size_t str_hasher(const string &s) {
     return hasher(s);
 }
 
+struct Domain;
 struct Globals {
     unordered_map<string, int> numeric_rename;
     vector<string> reverse_numeric_rename;
+    unordered_map<size_t, Domain*> domain_map;
 };
 
 inline Globals &globals() {
