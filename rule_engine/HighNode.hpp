@@ -45,6 +45,7 @@ struct HighNode {
     void fill_from_token(const GDLToken &t, 
             unordered_map<int, int> &var_mapping,
             int induced_type=TYPE::NONE);
+    void fill_from_token(const GDLToken &t);
     pair<string, string> assign_domain_hash_and_pattern(
             unordered_map<size_t, unordered_set<string>> & checker);
     void gather_base_valuations_from_consts(DomainValuation &to_fill) const;

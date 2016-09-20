@@ -38,6 +38,11 @@ string HighNode::to_string() const {
     return res;
 }
 
+void HighNode::fill_from_token(const GDLToken &t) {
+    unordered_map<int, int> vm;
+    fill_from_token(t, vm, TYPE::NONE);
+}
+
 void HighNode::fill_from_token(const GDLToken &t, 
         unordered_map<int, int> &var_mapping,
         int induced_type) {
