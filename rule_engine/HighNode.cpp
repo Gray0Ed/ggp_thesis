@@ -21,7 +21,7 @@ string HighNode::to_string() const {
     if (type == TYPE::THEOREM) {
         res += " <=";
     }
-    if (type == TYPE::SENTENCE || type == TYPE::TUPLE) {
+    if (type == TYPE::SENTENCE || type == TYPE::TUPLE || type == TYPE::CONST) {
         res += " " + reverse_numeric_rename[value];
     }
     for (const auto &node: sub) {
@@ -33,7 +33,7 @@ string HighNode::to_string() const {
             assert(0);
         }
     }
-    assert(type == TYPE::THEOREM || type == TYPE::SENTENCE || type == TYPE::TUPLE);
+    assert(type == TYPE::CONST || type == TYPE::THEOREM || type == TYPE::SENTENCE || type == TYPE::TUPLE);
     res += " )";
     return res;
 }
@@ -62,8 +62,8 @@ void HighNode::fill_from_token(const GDLToken &t,
                 contains_variable = true;
             } else {
                 type = TYPE::CONST;
-                value = renamed;
             }
+            value = renamed;
         } else {
             assert(induced_type == TYPE::SENTENCE);
             assert(t.val[0] != '?');
@@ -90,6 +90,9 @@ void HighNode::fill_from_token(const GDLToken &t,
             type = TYPE::SENTENCE;
         }
         assert(!t.sub.empty());
+        if (t(0) == "") {
+            cerr << t.to_nice_string() << endl;
+        }
         assert(t(0) != "");
         assert(t.sub[0].leaf());
         value = str_token_to_int(t(0));
@@ -202,6 +205,10 @@ void HighNode::collect_distinct_info(LimitedArray<AlignmentVarInfo, MAX_DOMAIN_V
     assert(sub.size() == 2);
     const HighNode *left_node = &sub[0];
     const HighNode *right_node = &sub[1];
+    if (left_node->type == TYPE::CONST && right_node->type == TYPE::CONST) {
+        assert(left_node->value != right_node->value);
+        return;
+    }
     if (left_node->type == TYPE::CONST) {
         swap(left_node, right_node);
     }

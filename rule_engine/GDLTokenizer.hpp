@@ -64,7 +64,9 @@ struct GDLToken {
             t.shorten_edges();
         }
         if (sub.size() == 1) {
-            *this = sub[0];
+            GDLToken new_me = sub[0];
+            this->val = new_me.val;
+            this->sub = new_me.sub;
         }
     }
 };
@@ -119,17 +121,17 @@ struct GDLTokenizer {
     static void tokenize(const string &input_path, vector<GDLToken> &result) {
         ifstream inp(input_path);
         string input = string((istreambuf_iterator<char>(inp)), istreambuf_iterator<char>());
-        tokenize_str(input, result);
+        GDLToken root;
+        tokenize_str(input, root);
+        result = root.sub;
     }
     
-    static void tokenize_str(const string &input, vector<GDLToken> &result) {
+    static void tokenize_str(const string &input, GDLToken &result) {
         GDLTokenizer gdl_tokenizer;
         gdl_tokenizer.input = input;
-        GDLToken root;
-        assert(gdl_tokenizer.tokenize(0, root) == gdl_tokenizer.input.size());
-        root.shorten_edges();
-        for (const auto &rule_token: root.sub) {
-            result.push_back(rule_token);
-        }
+        result.sub.resize(0);
+        result.val = "";
+        assert(gdl_tokenizer.tokenize(0, result) == gdl_tokenizer.input.size());
+        result.shorten_edges();
     }
 };

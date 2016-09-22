@@ -18,12 +18,11 @@ using namespace std;
 #include "common.hpp"
 #include "HighNode.hpp"
 
-const unordered_map<string, int> &numeric_rename = globals().numeric_rename;
 const int MAX_FLAT_RULES_SIZE = 1000000;
 
 namespace SENTENCE_TYPE {
     enum {
-        NORMAL,
+        NORMAL = 0,
         DOES,
         TRUE,
         NEXT,
@@ -60,23 +59,23 @@ struct BootstrapPropData {
     vector<int> theorems_n;
 };
 
-const int NOT_TOKEN_ID = str_token_to_int("not"); 
-const int DISTINCT_TOKEN_ID = str_token_to_int("distinct");
-const int NEXT_TOKEN_ID = str_token_to_int("next");
-const int LEGAL_TOKEN_ID = str_token_to_int("legal");
+int NOT_TOKEN_ID, DISTINCT_TOKEN_ID, NEXT_TOKEN_ID, LEGAL_TOKEN_ID;
 
 vector<bool> debug_always_true_sentence;
 vector<bool> debug_always_false_sentence;
 vector<bool> debug_always_false_theorem;
 vector<bool> debug_always_true_theorem;
-
-template <typename T> int sgn(T val) {
-    return (T(0) < val) - (val < T(0));
-}
-
 unordered_map<string, int> sentence_ids;
 vector<string> sentence_id_to_str;
 unordered_map<int, int> value_to_theo_type;
+
+
+void initialize_global_token_ids() {
+    NOT_TOKEN_ID = str_token_to_int("not"); 
+    DISTINCT_TOKEN_ID = str_token_to_int("distinct");
+    NEXT_TOKEN_ID = str_token_to_int("next");
+    LEGAL_TOKEN_ID = str_token_to_int("legal");
+}
 
 void prepare_value_to_theo_type_map() {
     vector<pair<const char*, int>> to_init = {
@@ -89,13 +88,24 @@ void prepare_value_to_theo_type_map() {
         make_pair("init", SENTENCE_TYPE::INIT),
     };
     for (const auto & p: to_init) {
-        value_to_theo_type[p.second] = str_token_to_int(p.first);
+        value_to_theo_type[str_token_to_int(p.first)] = p.second;
     }
 }
 
-int get_theo_type(const HighNode &node) {
-    assert(node.type == TYPE::THEOREM);
-    const auto first_val = node.sub[0].value;
+bool is_input_type(int sentence_type) {
+    return sentence_type == SENTENCE_TYPE::TRUE || sentence_type == SENTENCE_TYPE::DOES;
+}
+
+bool is_output_type(int sentence_type) {
+    return 
+        sentence_type == SENTENCE_TYPE::NEXT ||
+        sentence_type == SENTENCE_TYPE::LEGAL ||
+        sentence_type == SENTENCE_TYPE::TERMINAL ||
+        sentence_type == SENTENCE_TYPE::GOAL;
+}
+
+int get_sentence_type(const HighNode &node) {
+    const auto first_val = node.value;
     if (value_to_theo_type.count(first_val) > 0) {
         return value_to_theo_type[first_val];
     } else {
@@ -104,6 +114,7 @@ int get_theo_type(const HighNode &node) {
 }
 
 void generate_sentence_ids(const string &in_filename) {
+    initialize_global_token_ids();
     prepare_value_to_theo_type_map();
     ifstream inpf(in_filename);
 
@@ -111,17 +122,20 @@ void generate_sentence_ids(const string &in_filename) {
     unordered_set<string> checked_sentences;
     by_theo_type.resize(SENTENCE_TYPE::N_SENTENCE_TYPES);
 
-    vector<GDLToken> tokens;
+    GDLToken token;
     string line;
     while (getline(inpf, line)) {
-        tokens.resize(0);
-        GDLTokenizer::tokenize_str(line, tokens);
+        GDLTokenizer::tokenize_str(line, token);
         HighNode node;
-        node.fill_from_token(tokens[0]);
-        const string sentence_str = node.sub[0].to_string();
-        const int theo_type = get_theo_type(node);
-        if (checked_sentences.count(sentence_str) == 0) {
-            by_theo_type[theo_type].push_back(sentence_str);
+        node.fill_from_token(token);
+        for (int i = 0; i < (int)node.sub.size(); ++i) {
+            const string sentence_str = node.sub[i].to_string();
+            const int sentence_type = get_sentence_type(node.sub[i]);
+            if ((i == 0 || is_input_type(sentence_type)) &&
+                    (checked_sentences.count(sentence_str) == 0)) {
+                by_theo_type[sentence_type].push_back(sentence_str);
+                checked_sentences.insert(sentence_str);
+            }
         }
     }
     checked_sentences.clear();
@@ -190,16 +204,19 @@ void load_bootstrap_prop_data(const string &in_filename,
     to_fill.theorems_n.resize(0);
     to_fill.theorems_n.resize(max_sentence_id + 1);
     ifstream inpf(in_filename);
-    vector<GDLToken> tokens;
+    GDLToken token;
     string line;
     int theorem_id = 1;
     while (getline(inpf, line)) {
-        tokens.resize(0);
-        GDLTokenizer::tokenize_str(line, tokens);
+        GDLTokenizer::tokenize_str(line, token);
         HighNode node;
-        node.fill_from_token(tokens[0]);
+        node.fill_from_token(token);
         int head_id = sentence_ids[node.sub[0].to_string()];
-        to_fill.types[head_id] = get_theo_type(node);
+        if (head_id == 0) {
+            cerr << node.sub[0].to_string() << endl;
+        }
+        assert(head_id > 0);
+        to_fill.types[head_id] = get_sentence_type(node.sub[0]);
         ++to_fill.theorems_n[head_id];
         bool always_false = false;
         int forward_counter = 0;
@@ -213,6 +230,7 @@ void load_bootstrap_prop_data(const string &in_filename,
             if (flag == SUB_SENTENCE_FLAG::ALWAYS_TRUE) {
                 continue; // skip sentence, because it is always true
             } else if (flag == SUB_SENTENCE_FLAG::ALWAYS_FALSE) {
+                forward_counter = 1;
                 always_false = true;
                 break;
             }  else {
@@ -233,11 +251,10 @@ void load_bootstrap_prop_data(const string &in_filename,
     }
 }
 
-
+string theorem_to_string(int theorem_id, const BootstrapPropData &bpd);
 void find_ids_to_remove(BootstrapPropData &bpd, 
         vector<bool> &const_theos, vector<bool> &const_sentences) {
     vector<pair<int, bool>> const_sentences_queue;
-    int theorem_id = 1;
 
     debug_always_true_sentence.resize(0);
     debug_always_true_sentence.resize(bpd.types.size());
@@ -249,42 +266,43 @@ void find_ids_to_remove(BootstrapPropData &bpd,
     debug_always_false_theorem.resize(0);
     debug_always_false_theorem.resize(bpd.counters.size());
 
-    for (const auto &forward: bpd.counters) {
-        if (bpd.types[forward.sentence_id] == SENTENCE_TYPE::INIT) {
+    for (size_t theorem_id = 1; theorem_id < bpd.counters.size(); ++theorem_id) {
+        const auto &theo = bpd.counters[theorem_id];
+        const int sentence_id = theo.sentence_id;
+        const int sentence_type = bpd.types[theo.sentence_id];
+        if (sentence_type == SENTENCE_TYPE::INIT) {
             // skip init statements
-            assert(forward.counter_max == 0);
-            assert(!forward.always_false);
+            assert(theo.counter_max == 0);
+            assert(!theo.always_false);
             continue;
         }
-        if (bpd.types[forward.sentence_id] == SENTENCE_TYPE::NEXT) {
-            // leave const next because they are messy
-            continue;
-        }
-        assert(bpd.types[forward.sentence_id] != SENTENCE_TYPE::TRUE && 
-               bpd.types[forward.sentence_id] != SENTENCE_TYPE::DOES);
+        // no true and does on left side of theorem
+        assert(!is_input_type(sentence_type));
+        if (is_output_type(sentence_type)) continue;
 
-        if (forward.always_false) {
+        if (theo.always_false) {
             const_theos[theorem_id] = true;
             debug_always_false_theorem[theorem_id] = true;
-            assert(bpd.theorems_n[forward.sentence_id] > 0);
-            --bpd.theorems_n[forward.sentence_id];
-            if (bpd.theorems_n[forward.sentence_id] == 0) {
-                const_sentences[forward.sentence_id] = true;
-                debug_always_false_sentence[forward.sentence_id] = true;
-                const_sentences_queue.push_back(make_pair(forward.sentence_id, false));
+            assert(bpd.theorems_n[sentence_id] > 0);
+            --bpd.theorems_n[sentence_id];
+            if (bpd.theorems_n[sentence_id] == 0) {
+                assert(!const_sentences[sentence_id]);
+                debug_always_false_sentence[sentence_id] = true;
+                const_sentences[sentence_id] = true;
+                const_sentences_queue.push_back(make_pair(sentence_id, false));
             }
         }
-        if (forward.counter_max == 0) {
+        if (theo.counter_max == 0 && !theo.always_false) {
             const_theos[theorem_id] = true;
             debug_always_true_theorem[theorem_id] = true;
-            debug_always_true_sentence[forward.sentence_id] = true;
-            if (const_sentences[forward.sentence_id] == false) {
-                const_sentences[forward.sentence_id] = true;
-                const_sentences_queue.push_back(make_pair(forward.sentence_id, true));
+            if (!const_sentences[sentence_id]) {
+                debug_always_true_sentence[sentence_id] = true;
+                const_sentences[sentence_id] = true;
+                const_sentences_queue.push_back(make_pair(sentence_id, true));
             }
         }
-        ++theorem_id;
     }
+
     while (!const_sentences_queue.empty()) {
         const auto to_process = const_sentences_queue.back();
         const_sentences_queue.pop_back();
@@ -295,31 +313,38 @@ void find_ids_to_remove(BootstrapPropData &bpd,
             if (!sentence_value) {
                 theo_id = -theo_id;
             }
+            auto &tcounter = bpd.counters[abs(theo_id)];
+            if (is_output_type(bpd.types[tcounter.sentence_id])) continue;
             if (theo_id > 0) {
-                auto &tcounter = bpd.counters[theo_id];
                 ++tcounter.counter_value;
                 assert(tcounter.counter_value <= tcounter.counter_max);
                 if (tcounter.counter_value == tcounter.counter_max) {
-                    const_theos[theo_id] = true;
                     assert(!const_sentences[tcounter.sentence_id]);
-                    const_sentences[tcounter.sentence_id] = true;
                     debug_always_true_theorem[theo_id] = true;
                     debug_always_true_sentence[tcounter.sentence_id] = true;
+                    const_theos[theo_id] = true;
+                    assert(bpd.types[tcounter.sentence_id] == SENTENCE_TYPE::NORMAL);
+                    const_sentences[tcounter.sentence_id] = true;
                     const_sentences_queue.push_back(make_pair(tcounter.sentence_id, true));
                 }
             } else {
                 assert(theo_id < 0);
                 theo_id = -theo_id;
                 int dep_sentence_id = bpd.counters[theo_id].sentence_id;
-                debug_always_false_theorem[theo_id] = true;
-                const_theos[theo_id] = true;
-                --bpd.theorems_n[dep_sentence_id];
-                assert(bpd.theorems_n[dep_sentence_id] >= 0);
-                if (bpd.theorems_n[dep_sentence_id] == 0) {
-                    debug_always_false_sentence[dep_sentence_id] = true;
-                    assert(!const_sentences[dep_sentence_id]);
-                    const_sentences[dep_sentence_id] = true;
-                    const_sentences_queue.push_back(make_pair(dep_sentence_id, false));
+                if (!const_theos[theo_id]) {
+                    debug_always_false_theorem[theo_id] = true;
+                    const_theos[theo_id] = true;
+                    --bpd.theorems_n[dep_sentence_id];
+                    assert(bpd.theorems_n[dep_sentence_id] >= 0);
+                    if (bpd.theorems_n[dep_sentence_id] == 0) {
+                        debug_always_false_sentence[dep_sentence_id] = true;
+                        assert(bpd.types[dep_sentence_id] == SENTENCE_TYPE::NORMAL);
+                        assert(!const_sentences[dep_sentence_id]);
+                        const_sentences[dep_sentence_id] = true;
+                        const_sentences_queue.push_back(make_pair(dep_sentence_id, false));
+                    }
+                } else {
+                    assert(debug_always_false_theorem[theo_id]);
                 }
             }
         }
@@ -328,7 +353,7 @@ void find_ids_to_remove(BootstrapPropData &bpd,
 
 string theorem_to_string(int theorem_id, const BootstrapPropData &bpd) {
     string res = "( <= ( ";
-    res = sentence_id_to_str[bpd.counters[theorem_id].sentence_id] + " )";
+    res += sentence_id_to_str[bpd.counters[theorem_id].sentence_id] + " ) ";
     for (int deps: bpd.dependencies[theorem_id]) {
         int sentence_id = deps;
         res += "( ";
@@ -336,9 +361,9 @@ string theorem_to_string(int theorem_id, const BootstrapPropData &bpd) {
             res += " not ( ";
             sentence_id *= -1;
         }
-        res += sentence_id_to_str[sentence_id] + " )";
+        res += sentence_id_to_str[sentence_id] + " ) ";
         if (deps < 0) {
-            res += " )";
+            res += " ) ";
         }
     }
     return res;

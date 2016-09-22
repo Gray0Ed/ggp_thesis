@@ -35,6 +35,7 @@ int main(int argc, char **argv) {
         string nice_string = token.to_nice_string();
         if (nice_string.find("base") != string::npos) continue;
         if (nice_string.find("input") != string::npos) continue;
+        // warning - it will produce wrong output if there is something like not (distinct X X)
         if (regex_search(nice_string, reg_mach, reg_exp) // remove distinct X X
                 || already_printed.count(nice_string) > 0) {
             continue;
