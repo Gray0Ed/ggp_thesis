@@ -1,7 +1,8 @@
 #include <iostream>
 #include <fstream>
 #include <unordered_map>
-
+#include <cstdlib>
+#include <algorithm>
 
 #ifndef NO_BACKWARD
 #define BACKWARD_HAS_DW 1
@@ -18,8 +19,6 @@ using namespace std;
 #include "common.hpp"
 #include "HighNode.hpp"
 
-const int MAX_FLAT_RULES_SIZE = 1000000;
-
 namespace SENTENCE_TYPE {
     enum {
         NORMAL = 0,
@@ -34,15 +33,15 @@ namespace SENTENCE_TYPE {
     };
 };
 
-struct TheoremCounters {
+struct TheoremCounter {
     int sentence_id;
     short counter_max;
     short counter_value;
     bool bad, always_false;
-    TheoremCounters() {
+    TheoremCounter() {
         sentence_id = 0;
     }
-    TheoremCounters(int _sentence_id, short _counter_max, bool _always_false) {
+    TheoremCounter(int _sentence_id, short _counter_max, bool _always_false) {
         sentence_id = _sentence_id;
         counter_max = _counter_max;
         always_false = _always_false;
@@ -51,12 +50,41 @@ struct TheoremCounters {
     }
 };
 
+struct BacktrackDep {
+    vector<vector<int>> deps;
+    vector<int> theo_ids;
+};
+
 struct BootstrapPropData {
-    vector<TheoremCounters> counters;
+    vector<TheoremCounter> counters;
     vector<vector<int>> forward_deps;
-    vector<vector<int>> dependencies;
+    vector<BacktrackDep> dependencies;
     vector<int> types;
     vector<int> theorems_n;
+};
+
+struct TheoremInfo { //TODO refactor BootstrapPropData in vector<TheoremInfo>
+    // counter
+    // theorems_n
+    // theorem_id
+};
+
+struct SentenceInfo {
+    int type, equivalent_id, player_id;
+    SentenceInfo(){}
+    SentenceInfo(int _type, int _player_id=-11, int _equivalent_id=-1) {
+        type = _type;
+        equivalent_id = _equivalent_id;
+        player_id = _player_id;
+    }
+    // forward (propnet) deps
+    // backtrack deps
+};
+
+string input_path;
+
+namespace OutputPaths {
+    string debug_info, propnet_data, backtrack_data, types_and_pairings;
 };
 
 int NOT_TOKEN_ID, DISTINCT_TOKEN_ID, NEXT_TOKEN_ID, LEGAL_TOKEN_ID;
@@ -68,7 +96,16 @@ vector<bool> debug_always_true_theorem;
 unordered_map<string, int> sentence_ids;
 vector<string> sentence_id_to_str;
 unordered_map<int, int> value_to_theo_type;
+vector<bool> const_theos, const_sentences;
+BootstrapPropData bpd;
+vector<SentenceInfo> sentence_infos;
+vector<int> theorem_remap, sentence_remap;
+unordered_map<int, int> token_to_player_id;
+vector<string> theorem_id_to_string;
 
+template <typename T> int sgn(T val) {
+    return (T(0) < val) - (val < T(0));
+}
 
 void initialize_global_token_ids() {
     NOT_TOKEN_ID = str_token_to_int("not"); 
@@ -113,40 +150,100 @@ int get_sentence_type(const HighNode &node) {
     }
 }
 
-void generate_sentence_ids(const string &in_filename) {
+HighNode &not_stripper(HighNode &to_strip) {
+    if (to_strip.value == NOT_TOKEN_ID) {
+        assert(to_strip.sub.size() == 1);
+        return not_stripper(to_strip.sub[0]);
+    } else {
+        return to_strip;
+    }
+}
+
+bool get_equivalent_sentence_node(const HighNode &node, HighNode &res) {
+    int stype = get_sentence_type(node);
+    int equivalent_token_id = -1;
+    if (stype == SENTENCE_TYPE::INIT || stype == SENTENCE_TYPE::NEXT) {
+        equivalent_token_id = str_token_to_int("true");
+    }
+    if (stype == SENTENCE_TYPE::TRUE) {
+        equivalent_token_id = str_token_to_int("next");
+    }
+    if (stype == SENTENCE_TYPE::DOES) {
+        equivalent_token_id = str_token_to_int("legal");
+    }
+    if (stype == SENTENCE_TYPE::LEGAL) {
+        equivalent_token_id = str_token_to_int("does");
+    }
+    if (equivalent_token_id == -1) {
+        return false;
+    }
+    res = node;
+    res.value = equivalent_token_id;
+    return true;
+}
+
+int get_player_id(const HighNode &node) {
+    // player ids are from 1 to NP, where NP is the number of players
+    int stype = get_sentence_type(node);
+    assert(stype == SENTENCE_TYPE::LEGAL || stype == SENTENCE_TYPE::DOES);
+    assert(node.sub.size() > 1);
+    assert(node.sub[0].type == TYPE::CONST);
+    const int player_id_token = node.sub[0].value;
+    if (token_to_player_id.count(player_id_token) == 0) {
+        const int new_id = token_to_player_id.size() + 1;
+        token_to_player_id[player_id_token] = new_id;
+    }
+    return token_to_player_id[player_id_token];
+}
+
+
+int get_or_create_sentence_id(unordered_set<string> &checked_sentences,
+        const HighNode &node) {
+    const string sentence_str = node.to_string();
+    if (checked_sentences.count(sentence_str) == 0) {
+        checked_sentences.insert(sentence_str);
+        const int sentence_type = get_sentence_type(node);
+        const int sentence_id = checked_sentences.size();
+        sentence_ids[sentence_str] = sentence_id;
+        assert((int)sentence_id_to_str.size() == sentence_id);
+        sentence_id_to_str.push_back(sentence_str);
+        int player_id = -1;
+        if (sentence_type == SENTENCE_TYPE::DOES || sentence_type == SENTENCE_TYPE::LEGAL) {
+            player_id = get_player_id(node);
+        }
+        sentence_infos.push_back(SentenceInfo(sentence_type, -1, player_id));
+    }
+    return sentence_ids[sentence_str];
+}
+
+void generate_ids() {
     initialize_global_token_ids();
     prepare_value_to_theo_type_map();
-    ifstream inpf(in_filename);
+    ifstream inpf(input_path);
 
-    LimitedArray<vector<string>, SENTENCE_TYPE::N_SENTENCE_TYPES> by_theo_type;
     unordered_set<string> checked_sentences;
-    by_theo_type.resize(SENTENCE_TYPE::N_SENTENCE_TYPES);
-
     GDLToken token;
     string line;
+    sentence_id_to_str.push_back("$NOPE$!!!");
+    sentence_infos.push_back(SentenceInfo(-1));
     while (getline(inpf, line)) {
         GDLTokenizer::tokenize_str(line, token);
         HighNode node;
         node.fill_from_token(token);
         for (int i = 0; i < (int)node.sub.size(); ++i) {
-            const string sentence_str = node.sub[i].to_string();
-            const int sentence_type = get_sentence_type(node.sub[i]);
-            if ((i == 0 || is_input_type(sentence_type)) &&
-                    (checked_sentences.count(sentence_str) == 0)) {
-                by_theo_type[sentence_type].push_back(sentence_str);
-                checked_sentences.insert(sentence_str);
+            HighNode &not_not_node = not_stripper(node.sub[i]);
+            const int sentence_type = get_sentence_type(not_not_node);
+            if (i == 0 || is_input_type(sentence_type) ||
+                sentence_type == SENTENCE_TYPE::LEGAL) {
+                const int sentence_id = get_or_create_sentence_id(
+                    checked_sentences, not_not_node);
+                HighNode equivalent;
+                if (get_equivalent_sentence_node(not_not_node, equivalent)) {
+                    const int equiv_sentence_id = 
+                        get_or_create_sentence_id(checked_sentences, equivalent);
+                    sentence_infos[sentence_id].equivalent_id = equiv_sentence_id;
+                }
             }
-        }
-    }
-    checked_sentences.clear();
-    int id_counter = 1;
-    sentence_id_to_str.push_back("$NOPE$!!!");
-    for (int theo_type = 0; theo_type < SENTENCE_TYPE::N_SENTENCE_TYPES; ++theo_type) {
-        const auto &sentence_strs = by_theo_type[theo_type];
-        for (const auto &sentence: sentence_strs) {
-            sentence_ids[sentence] = id_counter++;
-            sentence_id_to_str.push_back(sentence);
-            assert(sentence_id_to_str[id_counter - 1] == sentence);
         }
     }
 }
@@ -191,19 +288,20 @@ int get_sub_sentence_id(const HighNode &snode, int &flag) {
     }
 }
 
-void load_bootstrap_prop_data(const string &in_filename, 
-                              BootstrapPropData &to_fill) {
+void load_bootstrap_prop_data() {
     // remove distinct (bc, always true)
     const int max_sentence_id = sentence_ids.size();
-    to_fill.counters.resize(0);
-    to_fill.counters.push_back(TheoremCounters(0, 0, true)); // dummy theorem 0
-    to_fill.dependencies.resize(0);
-    to_fill.dependencies.push_back(vector<int>());
-    to_fill.forward_deps.resize(max_sentence_id + 1);
-    to_fill.types.resize(max_sentence_id + 1);
-    to_fill.theorems_n.resize(0);
-    to_fill.theorems_n.resize(max_sentence_id + 1);
-    ifstream inpf(in_filename);
+    bpd.counters.resize(0);
+    bpd.counters.push_back(TheoremCounter(0, 0, true)); // dummy theorem 0
+    bpd.dependencies.resize(0);
+    bpd.dependencies.resize(max_sentence_id + 1);
+    bpd.forward_deps.resize(max_sentence_id + 1);
+    bpd.types.resize(max_sentence_id + 1);
+    bpd.theorems_n.resize(0);
+    bpd.theorems_n.resize(max_sentence_id + 1);
+    theorem_id_to_string.resize(0);
+    theorem_id_to_string.push_back("!$!!!NOPE_THEOREM!$!!!");
+    ifstream inpf(input_path);
     GDLToken token;
     string line;
     int theorem_id = 1;
@@ -216,15 +314,17 @@ void load_bootstrap_prop_data(const string &in_filename,
             cerr << node.sub[0].to_string() << endl;
         }
         assert(head_id > 0);
-        to_fill.types[head_id] = get_sentence_type(node.sub[0]);
-        ++to_fill.theorems_n[head_id];
+        bpd.types[head_id] = get_sentence_type(node.sub[0]);
+        ++bpd.theorems_n[head_id];
         bool always_false = false;
         int forward_counter = 0;
-        to_fill.dependencies.push_back(vector<int>());
+        auto &backtrack_info = bpd.dependencies[head_id];
+        backtrack_info.deps.push_back(vector<int>());
+        auto &backtrack_deps = backtrack_info.deps.back();
+        backtrack_info.theo_ids.push_back(theorem_id);
         for (size_t i = 1; i < node.sub.size(); ++i) {
             const auto &snode = node.sub[i];
             assert(snode.value != NEXT_TOKEN_ID);
-            assert(snode.value != LEGAL_TOKEN_ID);
             int flag;
             const int sub_sentence_id = get_sub_sentence_id(snode, flag);
             if (flag == SUB_SENTENCE_FLAG::ALWAYS_TRUE) {
@@ -241,17 +341,18 @@ void load_bootstrap_prop_data(const string &in_filename,
                     mult = -1;
                 }
                 ++forward_counter;
-                to_fill.forward_deps[sub_sentence_id].push_back(mult * theorem_id);
-                to_fill.dependencies.back().push_back(mult * sub_sentence_id);
+                bpd.forward_deps[sub_sentence_id].push_back(mult * theorem_id);
+                backtrack_deps.push_back(mult * sub_sentence_id);
             }
         }
-        to_fill.counters.push_back(TheoremCounters(head_id, forward_counter, always_false));
+        bpd.counters.push_back(TheoremCounter(head_id, forward_counter, always_false));
+        theorem_id_to_string.push_back(line);
         ++theorem_id;
-        assert((int)to_fill.counters.size() == theorem_id);
+        assert((int)theorem_id_to_string.size() == theorem_id);
+        assert((int)bpd.counters.size() == theorem_id);
     }
 }
 
-string theorem_to_string(int theorem_id, const BootstrapPropData &bpd);
 void find_ids_to_remove(BootstrapPropData &bpd, 
         vector<bool> &const_theos, vector<bool> &const_sentences) {
     vector<pair<int, bool>> const_sentences_queue;
@@ -319,7 +420,7 @@ void find_ids_to_remove(BootstrapPropData &bpd,
                 ++tcounter.counter_value;
                 assert(tcounter.counter_value <= tcounter.counter_max);
                 if (tcounter.counter_value == tcounter.counter_max) {
-                    assert(!const_sentences[tcounter.sentence_id]);
+                    assert(!const_theos[theo_id]);
                     debug_always_true_theorem[theo_id] = true;
                     debug_always_true_sentence[tcounter.sentence_id] = true;
                     const_theos[theo_id] = true;
@@ -351,33 +452,14 @@ void find_ids_to_remove(BootstrapPropData &bpd,
     }
 }
 
-string theorem_to_string(int theorem_id, const BootstrapPropData &bpd) {
-    string res = "( <= ( ";
-    res += sentence_id_to_str[bpd.counters[theorem_id].sentence_id] + " ) ";
-    for (int deps: bpd.dependencies[theorem_id]) {
-        int sentence_id = deps;
-        res += "( ";
-        if (deps < 0) {
-            res += " not ( ";
-            sentence_id *= -1;
-        }
-        res += sentence_id_to_str[sentence_id] + " ) ";
-        if (deps < 0) {
-            res += " ) ";
-        }
-    }
-    return res;
-}
-
-void remove_const_sentences(const string &in_filename) {
+void collect_and_filter_prop_net_data() {
     // remove const normal which, assert there is no always true does
     // if there is const legal, terminal, goal, init or next- leave it
     // remove distinct (because it is always true)
-    BootstrapPropData bpd;
-    load_bootstrap_prop_data(in_filename, bpd);
+    cerr << "loading bootstrap propagation data" << endl;
+    load_bootstrap_prop_data();
 
-    vector<bool> const_theos;
-    vector<bool> const_sentences;
+    cerr << "starting propagation" << endl;
     const_theos.resize(bpd.counters.size());
     const_sentences.resize(bpd.types.size());
     find_ids_to_remove(bpd, const_theos, const_sentences);
@@ -409,17 +491,213 @@ void remove_const_sentences(const string &in_filename) {
             assert(debug_always_false_theorem[i]);
             cerr << "false: ";
         }
-        cerr << theorem_to_string(i, bpd) << "\n";
+        cerr << theorem_id_to_string[i] << "\n";
+    }
+    theorem_remap.resize(bpd.counters.size());
+    sentence_remap.resize(bpd.types.size());
+    int theorem_counter = 1;
+    for (size_t theo_id = 1; theo_id < theorem_remap.size(); ++theo_id) {
+        if (!const_theos[theo_id]) {
+            theorem_remap[theo_id] = theorem_counter++;
+        } else {
+            theorem_remap[theo_id] = -1;
+        }
+    }
+    int sentence_counter = 1;
+    for (size_t sentence_id = 1; sentence_id < sentence_remap.size(); ++sentence_id) {
+        if (!const_sentences[sentence_id]) {
+            sentence_remap[sentence_id] = sentence_counter++;
+        } else {
+            sentence_remap[sentence_id] = -1;
+        }
+    }
+}
+
+
+void save_debug_info() {
+    ofstream debug_out(OutputPaths::debug_info);
+    debug_out << "#SENTENCE MAPPING:\n";
+    for (size_t sentence_id = 0; sentence_id < sentence_remap.size(); ++sentence_id) {
+        int new_id = sentence_remap[sentence_id];
+        if (new_id != -1) {
+            assert(new_id > 0);
+            debug_out << new_id << "\n" << sentence_id_to_str[new_id] << "\n";
+        }
+    }
+    debug_out << "\n#THEOREM MAPPING:\n";
+    for (size_t theo_id = 0; theo_id < theorem_remap.size(); ++theo_id) {
+        int new_id = theorem_remap[theo_id];
+        if (new_id != -1) {
+            assert(new_id > 0);
+            debug_out << new_id << "\n" << theorem_id_to_string[theo_id] << "\n";
+        }
+    }
+
+    debug_out << "\n#REMOVED SENTENCES:\n";
+    for (size_t sentence_id = 0; sentence_id < sentence_remap.size(); ++sentence_id) {
+        int new_id = sentence_remap[sentence_id];
+        if (new_id == -1) {
+            if (debug_always_true_sentence[sentence_id]) {
+                debug_out << "always true: ";
+            } else if (debug_always_false_sentence[sentence_id]) {
+                debug_out << "always false: ";
+            } else {
+                assert(false);
+            }
+            debug_out << sentence_id_to_str[sentence_id] << "\n";
+        }
+    }
+    debug_out << "\n#REMOVED THEOREMS";
+    for (size_t theo_id = 0; theo_id < theorem_remap.size(); ++theo_id) {
+        int new_id = theorem_remap[theo_id];
+        if (new_id == -1) {
+            if (debug_always_true_theorem[theo_id]) {
+                debug_out << "always true: ";
+            } else if (debug_always_false_theorem[theo_id]) {
+                debug_out << "always false: ";
+            } else {
+                assert(false);
+            }
+            debug_out << theorem_id_to_string[theo_id] << "\n";
+        }
+    }
+}
+
+void save_propnet_data() {
+    // propnet data format
+    // T, S - first line - number of theorems, number of sentences
+    // next T lines: sentence_id, counter_max
+    // next S lines: forward_deps
+    //      forward dep: n_deps deps
+    ofstream outfile(OutputPaths::propnet_data);
+    const int T = theorem_remap.size() - count(theorem_remap.begin(), theorem_remap.end(), -1);
+    const int S = sentence_remap.size() - count(sentence_remap.begin(), sentence_remap.end(), -1);
+    outfile << T << " " << S << "\n";
+    for (size_t theo_id = 1; theo_id < theorem_remap.size(); ++theo_id) {
+        if (theorem_remap[theo_id] != -1) {
+            assert(theorem_remap[theo_id] > 0);
+            const auto &tc = bpd.counters[theo_id];
+            int new_sentence_id = sentence_remap[tc.sentence_id];
+            assert(new_sentence_id > 0 && new_sentence_id <= S);
+            int new_counter_max = tc.counter_max - tc.counter_value;
+            assert(new_counter_max >= 0);
+            assert(!is_output_type(bpd.types[tc.sentence_id]) || new_counter_max > 0);
+            outfile << new_sentence_id << " " << new_counter_max << "\n";
+        }
+    }
+    for (size_t sentence_id = 1; sentence_id < sentence_remap.size(); ++sentence_id) {
+        if (sentence_remap[sentence_id] != -1) {
+            assert(sentence_remap[sentence_id] > 0);
+            const auto &deps = bpd.forward_deps[sentence_id];
+            int still_valid_counter = 0;
+            for (auto dep: deps) {
+                if (theorem_remap[abs(dep)] > 0) {
+                    ++still_valid_counter;
+                }
+            }
+            outfile << still_valid_counter << " ";
+            for (auto dep: deps) {
+                int remaped = theorem_remap[abs(dep)];
+                if (remaped > 0) {
+                    outfile << sgn(dep) * remaped << " ";
+                }
+            }
+            outfile << "\n";
+            assert(!is_output_type(bpd.types[sentence_id]) || still_valid_counter == 0);
+        }
+    }
+}
+
+void save_backtrack_data() {
+    // backtrack data format
+    // S - number of sentences
+    // sentence pack: number of theorems for given sentence
+    //      theorem pack:
+    //          theorem_id number_of_theorem_deps theorem_deps
+    const int S = sentence_remap.size() - count(sentence_remap.begin(), sentence_remap.end(), -1);
+    ofstream outfile(OutputPaths::backtrack_data);
+    outfile << S << "\n";
+    for (size_t sentence_id = 1; sentence_id < sentence_remap.size(); ++sentence_id) {
+        if (sentence_remap[sentence_id] != -1) {
+            assert(sentence_remap[sentence_id] > 0);
+            int valid_theorem_counter = 0;
+            const auto &sdeps = bpd.dependencies[sentence_id];
+            for (auto theo_id: sdeps.theo_ids) {
+                if (theorem_remap[abs(theo_id)] > 0) ++valid_theorem_counter;
+            }
+            int stype = bpd.types[sentence_id];
+            assert(valid_theorem_counter > 0 || is_input_type(stype) || is_output_type(stype));
+            outfile << valid_theorem_counter << "\n";
+            for (size_t dep_ind = 0; dep_ind < sdeps.theo_ids.size(); ++dep_ind) {
+                const int theo_id = sdeps.theo_ids[dep_ind];
+                const int new_theo_id = theorem_remap[abs(theo_id)];
+                if (new_theo_id == -1) {
+                    continue;
+                }
+                assert(new_theo_id > 0);
+                const auto &deps = sdeps.deps[dep_ind];
+                int valid_deps_counter = 0;
+                for (auto dep_sentence_id: deps) {
+                    if (sentence_remap[abs(dep_sentence_id)] != -1) {
+                        ++valid_deps_counter;
+                    }
+                }
+                outfile << new_theo_id << " " << valid_deps_counter << " ";
+                for (auto dep_sentence_id: deps) {
+                    if (sentence_remap[abs(dep_sentence_id)] != -1) {
+                        outfile << sgn(dep_sentence_id) * sentence_remap[abs(dep_sentence_id)] << " ";
+                    }
+                }
+                outfile << "\n";
+            }
+        }
+    }
+}
+
+void save_types_and_pairings_data() {
+    // types_and_pairings data format
+    // S - number of sentences
+    // next S: lines - sentence_id type_id [paired_id (if NEXT, TRUE, LEGAL or DOES)] [player_id (if LEGAL or DOES)]
+    ofstream outfile(OutputPaths::types_and_pairings);
+    const int S = sentence_remap.size() - count(sentence_remap.begin(), sentence_remap.end(), -1);
+    outfile << S << "\n";
+    for (size_t sentence_id = 1; sentence_id < sentence_remap.size(); ++sentence_id) {
+        const int new_id = sentence_remap[sentence_id];
+        if (new_id != -1) {
+            const auto &sentence_info = sentence_infos[sentence_id];
+            assert(new_id > 0);
+            outfile << new_id << " " << sentence_infos[sentence_id].type;
+            if (sentence_info.equivalent_id != -1) {
+                outfile << sentence_info.equivalent_id << " ";
+            }
+            if (sentence_info.player_id != -1) {
+                outfile << sentence_info.player_id;
+            }
+            outfile << "\n";
+        }
     }
 }
 
 int main(int argc, char **argv) {
     if (argc < 3) {
-        cerr << "usage: " << argv[0] << " INPUT OUTPUT\n";
+        cerr << "usage: " << argv[0] << " INPUT OUTPUT_DIR \n";
         return 1;
     }
-    generate_sentence_ids(argv[1]);
-    remove_const_sentences(argv[1]);
+    input_path = argv[1];
+    string output_dir = string(argv[2]) + string("/");
+    system(("mkdir -p " + output_dir).c_str());
+    OutputPaths::debug_info = output_dir + "debug_info";
+    OutputPaths::propnet_data = output_dir + "propnet_data";
+    OutputPaths::backtrack_data = output_dir + "backtrack_data";
+    OutputPaths::types_and_pairings = output_dir + "types_and_pairings";
+
+    cerr << "COLLECTING IDS" << endl;
+    generate_ids();
+    collect_and_filter_prop_net_data();
+    save_debug_info();
+    save_propnet_data();
+    save_backtrack_data();
+    save_types_and_pairings_data();
 
     // filter out const sentences and theorems
     // split by:
