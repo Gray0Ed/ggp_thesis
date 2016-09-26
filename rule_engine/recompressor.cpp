@@ -59,7 +59,6 @@ struct BootstrapPropData {
     vector<TheoremCounter> counters;
     vector<vector<int>> forward_deps;
     vector<BacktrackDep> dependencies;
-    vector<int> types;
     vector<int> theorems_n;
 };
 
@@ -101,7 +100,15 @@ BootstrapPropData bpd;
 vector<SentenceInfo> sentence_infos;
 vector<int> theorem_remap, sentence_remap;
 unordered_map<int, int> token_to_player_id;
-vector<string> theorem_id_to_string;
+vector<string> theorem_id_to_str;
+
+int upper_sentence_id() {
+    return sentence_id_to_str.size();
+}
+
+int upper_theorem_id() {
+    return theorem_id_to_str.size();
+}
 
 template <typename T> int sgn(T val) {
     return (T(0) < val) - (val < T(0));
@@ -130,15 +137,20 @@ void prepare_value_to_theo_type_map() {
 }
 
 bool is_input_type(int sentence_type) {
+    // can't be on left side of any theorem 
     return sentence_type == SENTENCE_TYPE::TRUE || sentence_type == SENTENCE_TYPE::DOES;
 }
 
 bool is_output_type(int sentence_type) {
+    // can't be on right side of any theorem
     return 
         sentence_type == SENTENCE_TYPE::NEXT ||
-        sentence_type == SENTENCE_TYPE::LEGAL ||
         sentence_type == SENTENCE_TYPE::TERMINAL ||
         sentence_type == SENTENCE_TYPE::GOAL;
+}
+
+bool is_removable_type(int sentence_type) {
+    return sentence_type == SENTENCE_TYPE::NORMAL;
 }
 
 int get_sentence_type(const HighNode &node) {
@@ -290,17 +302,15 @@ int get_sub_sentence_id(const HighNode &snode, int &flag) {
 
 void load_bootstrap_prop_data() {
     // remove distinct (bc, always true)
-    const int max_sentence_id = sentence_ids.size();
     bpd.counters.resize(0);
     bpd.counters.push_back(TheoremCounter(0, 0, true)); // dummy theorem 0
     bpd.dependencies.resize(0);
-    bpd.dependencies.resize(max_sentence_id + 1);
-    bpd.forward_deps.resize(max_sentence_id + 1);
-    bpd.types.resize(max_sentence_id + 1);
+    bpd.dependencies.resize(upper_sentence_id());
+    bpd.forward_deps.resize(upper_sentence_id());
     bpd.theorems_n.resize(0);
-    bpd.theorems_n.resize(max_sentence_id + 1);
-    theorem_id_to_string.resize(0);
-    theorem_id_to_string.push_back("!$!!!NOPE_THEOREM!$!!!");
+    bpd.theorems_n.resize(upper_sentence_id());
+    theorem_id_to_str.resize(0);
+    theorem_id_to_str.push_back("!$!!!NOPE_THEOREM!$!!!");
     ifstream inpf(input_path);
     GDLToken token;
     string line;
@@ -314,7 +324,6 @@ void load_bootstrap_prop_data() {
             cerr << node.sub[0].to_string() << endl;
         }
         assert(head_id > 0);
-        bpd.types[head_id] = get_sentence_type(node.sub[0]);
         ++bpd.theorems_n[head_id];
         bool always_false = false;
         int forward_counter = 0;
@@ -346,9 +355,9 @@ void load_bootstrap_prop_data() {
             }
         }
         bpd.counters.push_back(TheoremCounter(head_id, forward_counter, always_false));
-        theorem_id_to_string.push_back(line);
+        theorem_id_to_str.push_back(line);
         ++theorem_id;
-        assert((int)theorem_id_to_string.size() == theorem_id);
+        assert((int)theorem_id_to_str.size() == theorem_id);
         assert((int)bpd.counters.size() == theorem_id);
     }
 }
@@ -358,19 +367,19 @@ void find_ids_to_remove(BootstrapPropData &bpd,
     vector<pair<int, bool>> const_sentences_queue;
 
     debug_always_true_sentence.resize(0);
-    debug_always_true_sentence.resize(bpd.types.size());
+    debug_always_true_sentence.resize(upper_sentence_id());
     debug_always_false_sentence.resize(0);
-    debug_always_false_sentence.resize(bpd.types.size());
+    debug_always_false_sentence.resize(upper_sentence_id());
 
     debug_always_true_theorem.resize(0);
-    debug_always_true_theorem.resize(bpd.counters.size());
+    debug_always_true_theorem.resize(upper_theorem_id());
     debug_always_false_theorem.resize(0);
-    debug_always_false_theorem.resize(bpd.counters.size());
+    debug_always_false_theorem.resize(upper_theorem_id());
 
-    for (size_t theorem_id = 1; theorem_id < bpd.counters.size(); ++theorem_id) {
+    for (int theorem_id = 1; theorem_id < upper_theorem_id(); ++theorem_id) {
         const auto &theo = bpd.counters[theorem_id];
         const int sentence_id = theo.sentence_id;
-        const int sentence_type = bpd.types[theo.sentence_id];
+        const int sentence_type = sentence_infos[theo.sentence_id].type;
         if (sentence_type == SENTENCE_TYPE::INIT) {
             // skip init statements
             assert(theo.counter_max == 0);
@@ -379,7 +388,7 @@ void find_ids_to_remove(BootstrapPropData &bpd,
         }
         // no true and does on left side of theorem
         assert(!is_input_type(sentence_type));
-        if (is_output_type(sentence_type)) continue;
+        if (!is_removable_type(sentence_type)) continue;
 
         if (theo.always_false) {
             const_theos[theorem_id] = true;
@@ -415,7 +424,9 @@ void find_ids_to_remove(BootstrapPropData &bpd,
                 theo_id = -theo_id;
             }
             auto &tcounter = bpd.counters[abs(theo_id)];
-            if (is_output_type(bpd.types[tcounter.sentence_id])) continue;
+            const int head_sentence_type = sentence_infos[tcounter.sentence_id].type;
+            assert(!is_input_type(head_sentence_type));
+            if (!is_removable_type(head_sentence_type)) continue;
             if (theo_id > 0) {
                 ++tcounter.counter_value;
                 assert(tcounter.counter_value <= tcounter.counter_max);
@@ -424,7 +435,6 @@ void find_ids_to_remove(BootstrapPropData &bpd,
                     debug_always_true_theorem[theo_id] = true;
                     debug_always_true_sentence[tcounter.sentence_id] = true;
                     const_theos[theo_id] = true;
-                    assert(bpd.types[tcounter.sentence_id] == SENTENCE_TYPE::NORMAL);
                     const_sentences[tcounter.sentence_id] = true;
                     const_sentences_queue.push_back(make_pair(tcounter.sentence_id, true));
                 }
@@ -439,7 +449,6 @@ void find_ids_to_remove(BootstrapPropData &bpd,
                     assert(bpd.theorems_n[dep_sentence_id] >= 0);
                     if (bpd.theorems_n[dep_sentence_id] == 0) {
                         debug_always_false_sentence[dep_sentence_id] = true;
-                        assert(bpd.types[dep_sentence_id] == SENTENCE_TYPE::NORMAL);
                         assert(!const_sentences[dep_sentence_id]);
                         const_sentences[dep_sentence_id] = true;
                         const_sentences_queue.push_back(make_pair(dep_sentence_id, false));
@@ -448,6 +457,15 @@ void find_ids_to_remove(BootstrapPropData &bpd,
                     assert(debug_always_false_theorem[theo_id]);
                 }
             }
+        }
+    }
+
+    // remove theorems which point to const sentences
+    for (size_t theo_id = 1; theo_id < bpd.counters.size(); ++theo_id) {
+        const int sentence_id = bpd.counters[theo_id].sentence_id;
+        if (const_sentences[sentence_id] && !const_theos[theo_id]) {
+            assert(debug_always_true_sentence[sentence_id]);
+            const_theos[theo_id] = true;
         }
     }
 }
@@ -460,16 +478,16 @@ void collect_and_filter_prop_net_data() {
     load_bootstrap_prop_data();
 
     cerr << "starting propagation" << endl;
-    const_theos.resize(bpd.counters.size());
-    const_sentences.resize(bpd.types.size());
+    const_theos.resize(upper_theorem_id());
+    const_sentences.resize(upper_sentence_id());
     find_ids_to_remove(bpd, const_theos, const_sentences);
     for (int i = 1; i < (int)debug_always_true_sentence.size(); ++i) {
         assert((debug_always_true_sentence[i] || debug_always_false_sentence[i]) ==
                const_sentences[i]);
     }
     for (int i = 1; i < (int)debug_always_true_theorem.size(); ++i) {
-        assert((debug_always_true_theorem[i] || debug_always_false_theorem[i]) ==
-               const_theos[i]);
+        assert(((debug_always_true_theorem[i] || debug_always_false_theorem[i]) ==
+               const_theos[i]) || debug_always_true_sentence[bpd.counters[i].sentence_id]);
     }
     cerr << "CONST SENTENCES:\n";
     for (int i = 1; i < (int)const_sentences.size(); ++i) if (const_sentences[i]) {
@@ -487,14 +505,16 @@ void collect_and_filter_prop_net_data() {
         cerr << "always ";
         if (debug_always_true_theorem[i]) {
             cerr << "true: ";
-        } else {
-            assert(debug_always_false_theorem[i]);
+        } else if (debug_always_false_theorem[i]) {
             cerr << "false: ";
+        } else {
+            assert(debug_always_true_sentence[bpd.counters[i].sentence_id]);
+            cerr << "pointing to const s: ";
         }
-        cerr << theorem_id_to_string[i] << "\n";
+        cerr << theorem_id_to_str[i] << "\n";
     }
-    theorem_remap.resize(bpd.counters.size());
-    sentence_remap.resize(bpd.types.size());
+    theorem_remap.resize(upper_theorem_id());
+    sentence_remap.resize(upper_sentence_id());
     int theorem_counter = 1;
     for (size_t theo_id = 1; theo_id < theorem_remap.size(); ++theo_id) {
         if (!const_theos[theo_id]) {
@@ -517,24 +537,24 @@ void collect_and_filter_prop_net_data() {
 void save_debug_info() {
     ofstream debug_out(OutputPaths::debug_info);
     debug_out << "#SENTENCE MAPPING:\n";
-    for (size_t sentence_id = 0; sentence_id < sentence_remap.size(); ++sentence_id) {
+    for (size_t sentence_id = 1; sentence_id < sentence_remap.size(); ++sentence_id) {
         int new_id = sentence_remap[sentence_id];
         if (new_id != -1) {
             assert(new_id > 0);
-            debug_out << new_id << "\n" << sentence_id_to_str[new_id] << "\n";
+            debug_out << new_id << "\n" << sentence_id_to_str[sentence_id] << "\n";
         }
     }
     debug_out << "\n#THEOREM MAPPING:\n";
-    for (size_t theo_id = 0; theo_id < theorem_remap.size(); ++theo_id) {
+    for (size_t theo_id = 1; theo_id < theorem_remap.size(); ++theo_id) {
         int new_id = theorem_remap[theo_id];
         if (new_id != -1) {
             assert(new_id > 0);
-            debug_out << new_id << "\n" << theorem_id_to_string[theo_id] << "\n";
+            debug_out << new_id << "\n" << theorem_id_to_str[theo_id] << "\n";
         }
     }
 
     debug_out << "\n#REMOVED SENTENCES:\n";
-    for (size_t sentence_id = 0; sentence_id < sentence_remap.size(); ++sentence_id) {
+    for (size_t sentence_id = 1; sentence_id < sentence_remap.size(); ++sentence_id) {
         int new_id = sentence_remap[sentence_id];
         if (new_id == -1) {
             if (debug_always_true_sentence[sentence_id]) {
@@ -542,13 +562,14 @@ void save_debug_info() {
             } else if (debug_always_false_sentence[sentence_id]) {
                 debug_out << "always false: ";
             } else {
+                debug_out << "pointing to const: ";
                 assert(false);
             }
             debug_out << sentence_id_to_str[sentence_id] << "\n";
         }
     }
-    debug_out << "\n#REMOVED THEOREMS";
-    for (size_t theo_id = 0; theo_id < theorem_remap.size(); ++theo_id) {
+    debug_out << "\n#REMOVED THEOREMS\n";
+    for (size_t theo_id = 1; theo_id < theorem_remap.size(); ++theo_id) {
         int new_id = theorem_remap[theo_id];
         if (new_id == -1) {
             if (debug_always_true_theorem[theo_id]) {
@@ -556,9 +577,9 @@ void save_debug_info() {
             } else if (debug_always_false_theorem[theo_id]) {
                 debug_out << "always false: ";
             } else {
-                assert(false);
+                assert(debug_always_true_sentence[bpd.counters[theo_id].sentence_id]);
             }
-            debug_out << theorem_id_to_string[theo_id] << "\n";
+            debug_out << theorem_id_to_str[theo_id] << "\n";
         }
     }
 }
@@ -581,7 +602,8 @@ void save_propnet_data() {
             assert(new_sentence_id > 0 && new_sentence_id <= S);
             int new_counter_max = tc.counter_max - tc.counter_value;
             assert(new_counter_max >= 0);
-            assert(!is_output_type(bpd.types[tc.sentence_id]) || new_counter_max > 0);
+            assert(!is_removable_type(sentence_infos[tc.sentence_id].type)
+                   || new_counter_max > 0);
             outfile << new_sentence_id << " " << new_counter_max << "\n";
         }
     }
@@ -603,7 +625,7 @@ void save_propnet_data() {
                 }
             }
             outfile << "\n";
-            assert(!is_output_type(bpd.types[sentence_id]) || still_valid_counter == 0);
+            assert(!is_output_type(sentence_infos[sentence_id].type) || still_valid_counter == 0);
         }
     }
 }
@@ -625,8 +647,12 @@ void save_backtrack_data() {
             for (auto theo_id: sdeps.theo_ids) {
                 if (theorem_remap[abs(theo_id)] > 0) ++valid_theorem_counter;
             }
-            int stype = bpd.types[sentence_id];
-            assert(valid_theorem_counter > 0 || is_input_type(stype) || is_output_type(stype));
+            int stype = sentence_infos[sentence_id].type;
+            if (!(valid_theorem_counter > 0 || !is_removable_type(stype))) {
+                cerr << "wut? stype: " << stype << endl;
+                cerr << sentence_id_to_str[sentence_id] << endl;
+            }
+            assert(valid_theorem_counter > 0 || !is_removable_type(stype));
             outfile << valid_theorem_counter << "\n";
             for (size_t dep_ind = 0; dep_ind < sdeps.theo_ids.size(); ++dep_ind) {
                 const int theo_id = sdeps.theo_ids[dep_ind];
