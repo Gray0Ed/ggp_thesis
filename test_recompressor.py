@@ -1,13 +1,15 @@
 import os
 import sys
+from os.path import isfile
 
 RECOMPRESSOR_INPUTS_D = 'test/recompressor_inputs/'
 RECOMPRESSOR_OUTPUTS_D = 'test/recompressor_outputs/'
 
 COMMAND_CHAIN = [
-    ("./rule_engine/reprinter {0} {1} >{2} 2>{3}", "first_reprinted"),
     ("python simplify_by_sancho.py {0} {1} >{2} 2>{3}", "simplified"),
-    ("python flatten_by_sancho.py {0} {1} >{2} 2>{3}", "flattened"),
+    ("./rule_engine/reprinter {0} {1} >{2} 2>{3}", "first_reprinted"),
+    #("python flatten_by_sancho.py {0} {1} >{2} 2>{3}", "flattened"),
+    ("./rule_engine/flatten {0} {1} >{2} 2>{3}", "flattened"),
     ("./rule_engine/reprinter {0} {1} >{2} 2>{3}", "reprinted"),
     ("time ./rule_engine/recompressor {0} {1} >{2} 2>{3}", "recompressed"),
 ]
@@ -38,10 +40,14 @@ def main():
 
     for inpf in inputs:
         cmd_input = None
+        out_dir = (RECOMPRESSOR_OUTPUTS_D + inpf + '/')
+        run_cmd("mkdir -p %s" % out_dir)
         for command_pattern, output_suffix in COMMAND_CHAIN:
             if cmd_input is None:
                 cmd_input = RECOMPRESSOR_INPUTS_D + inpf
-            cmd_output = RECOMPRESSOR_OUTPUTS_D + inpf + '.' + output_suffix
+                if not isfile(cmd_input):
+                    raise Exception("file %s does not exist" % cmd_input)
+            cmd_output = out_dir + output_suffix
             cmd_stdout = cmd_output + '.stdout'
             cmd_stderr = cmd_output + '.stderr'
             cmd = command_pattern.format(

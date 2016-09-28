@@ -39,6 +39,7 @@ string HighNode::to_string() const {
 }
 
 void HighNode::fill_from_token(const GDLToken &t) {
+    reset();
     unordered_map<int, int> vm;
     fill_from_token(t, vm, TYPE::NONE);
 }

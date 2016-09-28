@@ -71,7 +71,7 @@ struct TheoremInfo { //TODO refactor BootstrapPropData in vector<TheoremInfo>
 struct SentenceInfo {
     int type, equivalent_id, player_id;
     SentenceInfo(){}
-    SentenceInfo(int _type, int _player_id=-11, int _equivalent_id=-1) {
+    SentenceInfo(int _type, int _player_id=-1, int _equivalent_id=-1) {
         type = _type;
         equivalent_id = _equivalent_id;
         player_id = _player_id;
@@ -153,6 +153,12 @@ bool is_removable_type(int sentence_type) {
     return sentence_type == SENTENCE_TYPE::NORMAL;
 }
 
+bool is_with_equivalent_type(int sentence_type) {
+    return sentence_type != SENTENCE_TYPE::NORMAL &&
+           sentence_type != SENTENCE_TYPE::TERMINAL &&
+           sentence_type != SENTENCE_TYPE::GOAL;
+}
+
 int get_sentence_type(const HighNode &node) {
     const auto first_val = node.value;
     if (value_to_theo_type.count(first_val) > 0) {
@@ -171,8 +177,9 @@ HighNode &not_stripper(HighNode &to_strip) {
     }
 }
 
-bool get_equivalent_sentence_node(const HighNode &node, HighNode &res) {
+void get_equivalent_sentence_node(const HighNode &node, HighNode &res) {
     int stype = get_sentence_type(node);
+    assert(is_with_equivalent_type(stype));
     int equivalent_token_id = -1;
     if (stype == SENTENCE_TYPE::INIT || stype == SENTENCE_TYPE::NEXT) {
         equivalent_token_id = str_token_to_int("true");
@@ -187,11 +194,10 @@ bool get_equivalent_sentence_node(const HighNode &node, HighNode &res) {
         equivalent_token_id = str_token_to_int("does");
     }
     if (equivalent_token_id == -1) {
-        return false;
+        assert(false);
     }
     res = node;
     res.value = equivalent_token_id;
-    return true;
 }
 
 int get_player_id(const HighNode &node) {
@@ -223,7 +229,16 @@ int get_or_create_sentence_id(unordered_set<string> &checked_sentences,
         if (sentence_type == SENTENCE_TYPE::DOES || sentence_type == SENTENCE_TYPE::LEGAL) {
             player_id = get_player_id(node);
         }
-        sentence_infos.push_back(SentenceInfo(sentence_type, -1, player_id));
+        assert((int)sentence_infos.size() == sentence_id);
+        sentence_infos.push_back(SentenceInfo());
+        int equivalent_sentence_id = -1;
+        if (is_with_equivalent_type(sentence_type)) {
+            HighNode equivalent;
+            get_equivalent_sentence_node(node, equivalent);
+            equivalent_sentence_id = get_or_create_sentence_id(checked_sentences, equivalent);
+        }
+        sentence_infos[sentence_id] = SentenceInfo(
+                sentence_type, player_id, equivalent_sentence_id);
     }
     return sentence_ids[sentence_str];
 }
@@ -236,27 +251,36 @@ void generate_ids() {
     unordered_set<string> checked_sentences;
     GDLToken token;
     string line;
+    HighNode node;
     sentence_id_to_str.push_back("$NOPE$!!!");
     sentence_infos.push_back(SentenceInfo(-1));
+    int done_counter = 0;
     while (getline(inpf, line)) {
         GDLTokenizer::tokenize_str(line, token);
-        HighNode node;
         node.fill_from_token(token);
         for (int i = 0; i < (int)node.sub.size(); ++i) {
             HighNode &not_not_node = not_stripper(node.sub[i]);
             const int sentence_type = get_sentence_type(not_not_node);
+            bool do_debug_print = not_not_node.to_string().find("terminal") != string::npos;
+            if (do_debug_print) {
+                cerr << "hello J " << sentence_type << "\n" << line << endl;
+                cerr << not_not_node.to_string() << endl;
+            }
+
             if (i == 0 || is_input_type(sentence_type) ||
                 sentence_type == SENTENCE_TYPE::LEGAL) {
-                const int sentence_id = get_or_create_sentence_id(
-                    checked_sentences, not_not_node);
-                HighNode equivalent;
-                if (get_equivalent_sentence_node(not_not_node, equivalent)) {
-                    const int equiv_sentence_id = 
-                        get_or_create_sentence_id(checked_sentences, equivalent);
-                    sentence_infos[sentence_id].equivalent_id = equiv_sentence_id;
+                const int sentence_id = get_or_create_sentence_id(checked_sentences, not_not_node);
+
+                if (do_debug_print) {
+                    cerr << sentence_id << endl;
                 }
+            } else if (do_debug_print) {
+                cerr << endl;
             }
         }
+        ++done_counter;
+        if (done_counter % 10000 == 0)
+            cerr << "done lines n: " << done_counter << endl;
     }
 }
 
@@ -427,11 +451,14 @@ void find_ids_to_remove(BootstrapPropData &bpd,
             const int head_sentence_type = sentence_infos[tcounter.sentence_id].type;
             assert(!is_input_type(head_sentence_type));
             if (!is_removable_type(head_sentence_type)) continue;
+            if (const_theos[abs(theo_id)]) {
+                assert(debug_always_false_theorem[theo_id]);
+                continue;
+            }
             if (theo_id > 0) {
                 ++tcounter.counter_value;
                 assert(tcounter.counter_value <= tcounter.counter_max);
                 if (tcounter.counter_value == tcounter.counter_max) {
-                    assert(!const_theos[theo_id]);
                     debug_always_true_theorem[theo_id] = true;
                     debug_always_true_sentence[tcounter.sentence_id] = true;
                     const_theos[theo_id] = true;
@@ -442,19 +469,15 @@ void find_ids_to_remove(BootstrapPropData &bpd,
                 assert(theo_id < 0);
                 theo_id = -theo_id;
                 int dep_sentence_id = bpd.counters[theo_id].sentence_id;
-                if (!const_theos[theo_id]) {
-                    debug_always_false_theorem[theo_id] = true;
-                    const_theos[theo_id] = true;
-                    --bpd.theorems_n[dep_sentence_id];
-                    assert(bpd.theorems_n[dep_sentence_id] >= 0);
-                    if (bpd.theorems_n[dep_sentence_id] == 0) {
-                        debug_always_false_sentence[dep_sentence_id] = true;
-                        assert(!const_sentences[dep_sentence_id]);
-                        const_sentences[dep_sentence_id] = true;
-                        const_sentences_queue.push_back(make_pair(dep_sentence_id, false));
-                    }
-                } else {
-                    assert(debug_always_false_theorem[theo_id]);
+                debug_always_false_theorem[theo_id] = true;
+                const_theos[theo_id] = true;
+                --bpd.theorems_n[dep_sentence_id];
+                assert(bpd.theorems_n[dep_sentence_id] >= 0);
+                if (bpd.theorems_n[dep_sentence_id] == 0) {
+                    debug_always_false_sentence[dep_sentence_id] = true;
+                    assert(!const_sentences[dep_sentence_id]);
+                    const_sentences[dep_sentence_id] = true;
+                    const_sentences_queue.push_back(make_pair(dep_sentence_id, false));
                 }
             }
         }
@@ -692,12 +715,18 @@ void save_types_and_pairings_data() {
         if (new_id != -1) {
             const auto &sentence_info = sentence_infos[sentence_id];
             assert(new_id > 0);
-            outfile << new_id << " " << sentence_infos[sentence_id].type;
+            outfile << new_id << " " << sentence_info.type << " ";
             if (sentence_info.equivalent_id != -1) {
-                outfile << sentence_info.equivalent_id << " ";
+                const int new_equiv_id = sentence_remap[sentence_info.equivalent_id];
+                outfile << new_equiv_id << " ";
+            } else {
+                assert(!is_with_equivalent_type(sentence_info.type));
             }
             if (sentence_info.player_id != -1) {
                 outfile << sentence_info.player_id;
+            } else {
+                assert(sentence_info.type != SENTENCE_TYPE::DOES &&
+                       sentence_info.type != SENTENCE_TYPE::LEGAL);
             }
             outfile << "\n";
         }

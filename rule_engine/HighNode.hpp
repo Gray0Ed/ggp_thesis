@@ -37,10 +37,18 @@ struct HighNode {
     static vector<HighNode> generate_from_tokens(const vector<GDLToken> &tokens);
 
     HighNode() {
+        reset();
+    }
+
+    void reset() {
         max_sub_size = 0;
         max_theorem_vars_n = 0;
         theorem_vars_n = 0;
+        sub.resize(0);
+        value = -1;
+        exp_var_id = -1;
     }
+
     string to_string() const;
     void fill_from_token(const GDLToken &t, 
             unordered_map<int, int> &var_mapping,

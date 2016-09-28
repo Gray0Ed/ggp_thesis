@@ -134,4 +134,14 @@ struct GDLTokenizer {
         assert(gdl_tokenizer.tokenize(0, result) == gdl_tokenizer.input.size());
         result.shorten_edges();
     }
+
+    // works assuming that ther is one rule per line in file
+    static void optimized_tokenize(const string &input_path, vector<GDLToken> &result) {
+        ifstream inp(input_path);
+        string line;
+        while (getline(inp, line)) {
+            result.push_back(GDLToken());
+            tokenize_str(line, result.back());
+        }
+    }
 };

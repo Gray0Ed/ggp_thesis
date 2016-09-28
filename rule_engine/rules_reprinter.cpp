@@ -25,13 +25,13 @@ int main(int argc, char **argv) {
         cerr << "usage: " << argv[0] << " INPUT OUTPUT\n";
         return 1;
     }
-    vector<GDLToken> rule_tokens;
-    cerr << "before tokenize" << endl;
-    GDLTokenizer::tokenize(argv[1], rule_tokens);
-    cerr << "after tokenize" << endl;
     vector<string> lines;
     unordered_set<string> already_printed;
-    for (const auto &token: rule_tokens) {
+    GDLToken token;
+    ifstream inpf(argv[1]);
+    string line;
+    while (getline(inpf, line)) {
+        GDLTokenizer::tokenize_str(line, token);
         string nice_string = token.to_nice_string();
         if (nice_string.find("base") != string::npos) continue;
         if (nice_string.find("input") != string::npos) continue;
