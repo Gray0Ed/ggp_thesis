@@ -4,3 +4,4 @@ all:
 	g++ --std=c++14 -O3 -g -rdynamic -D_GLIBCXX_DEBUG -o reprinter rules_reprinter.cpp -ldw
 	g++ --std=c++14 -g -rdynamic -D_GLIBCXX_DEBUG -o recompressor recompressor.cpp HighNode.cpp aligner.cpp -ldw -Wall
 	g++ --std=c++14 -O3 -g -rdynamic -D_GLIBCXX_DEBUG -o recompressor_opt recompressor.cpp HighNode.cpp aligner.cpp -ldw -Wall
+	g++ --std=c++14 -g -rdynamic -D_GLIBCXX_DEBUG -o recom_cmp recompressed_comparator.cpp tools_for_recompressed.cpp -ldw -Wall

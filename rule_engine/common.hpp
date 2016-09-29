@@ -30,6 +30,10 @@ inline size_t str_hasher(const string &s) {
     return hasher(s);
 }
 
+template <typename T> int sgn(T val) {
+    return (T(0) < val) - (val < T(0));
+}
+
 struct Domain;
 struct Globals {
     unordered_map<string, int> numeric_rename;

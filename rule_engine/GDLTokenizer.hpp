@@ -21,6 +21,10 @@ struct GDLToken {
     }
 
     string to_nice_string(bool is_top=true) const {
+        if (is_top && sub.empty()) {
+            assert(val != "");
+            return "( " + val + " )";
+        }
         string res = val;
         if (!sub.empty()) {
             assert(res == "");

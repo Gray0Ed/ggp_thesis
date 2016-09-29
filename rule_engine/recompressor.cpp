@@ -18,20 +18,8 @@ namespace backward {
 using namespace std;
 #include "common.hpp"
 #include "HighNode.hpp"
+#include "recompressor.hpp"
 
-namespace SENTENCE_TYPE {
-    enum {
-        NORMAL = 0,
-        DOES,
-        TRUE,
-        NEXT,
-        LEGAL,
-        TERMINAL,
-        GOAL,
-        INIT,
-        N_SENTENCE_TYPES
-    };
-};
 
 struct TheoremCounter {
     int sentence_id;
@@ -68,17 +56,7 @@ struct TheoremInfo { //TODO refactor BootstrapPropData in vector<TheoremInfo>
     // theorem_id
 };
 
-struct SentenceInfo {
-    int type, equivalent_id, player_id;
-    SentenceInfo(){}
-    SentenceInfo(int _type, int _player_id=-1, int _equivalent_id=-1) {
-        type = _type;
-        equivalent_id = _equivalent_id;
-        player_id = _player_id;
-    }
-    // forward (propnet) deps
-    // backtrack deps
-};
+
 
 string input_path;
 
@@ -110,10 +88,6 @@ int upper_theorem_id() {
     return theorem_id_to_str.size();
 }
 
-template <typename T> int sgn(T val) {
-    return (T(0) < val) - (val < T(0));
-}
-
 void initialize_global_token_ids() {
     NOT_TOKEN_ID = str_token_to_int("not"); 
     DISTINCT_TOKEN_ID = str_token_to_int("distinct");
@@ -136,28 +110,7 @@ void prepare_value_to_theo_type_map() {
     }
 }
 
-bool is_input_type(int sentence_type) {
-    // can't be on left side of any theorem 
-    return sentence_type == SENTENCE_TYPE::TRUE || sentence_type == SENTENCE_TYPE::DOES;
-}
 
-bool is_output_type(int sentence_type) {
-    // can't be on right side of any theorem
-    return 
-        sentence_type == SENTENCE_TYPE::NEXT ||
-        sentence_type == SENTENCE_TYPE::TERMINAL ||
-        sentence_type == SENTENCE_TYPE::GOAL;
-}
-
-bool is_removable_type(int sentence_type) {
-    return sentence_type == SENTENCE_TYPE::NORMAL;
-}
-
-bool is_with_equivalent_type(int sentence_type) {
-    return sentence_type != SENTENCE_TYPE::NORMAL &&
-           sentence_type != SENTENCE_TYPE::TERMINAL &&
-           sentence_type != SENTENCE_TYPE::GOAL;
-}
 
 int get_sentence_type(const HighNode &node) {
     const auto first_val = node.value;
@@ -215,13 +168,11 @@ int get_player_id(const HighNode &node) {
 }
 
 
-int get_or_create_sentence_id(unordered_set<string> &checked_sentences,
-        const HighNode &node) {
+int get_or_create_sentence_id(const HighNode &node) {
     const string sentence_str = node.to_string();
-    if (checked_sentences.count(sentence_str) == 0) {
-        checked_sentences.insert(sentence_str);
+    if (sentence_ids.count(sentence_str) == 0) {
         const int sentence_type = get_sentence_type(node);
-        const int sentence_id = checked_sentences.size();
+        const int sentence_id = sentence_ids.size() + 1;
         sentence_ids[sentence_str] = sentence_id;
         assert((int)sentence_id_to_str.size() == sentence_id);
         sentence_id_to_str.push_back(sentence_str);
@@ -235,7 +186,7 @@ int get_or_create_sentence_id(unordered_set<string> &checked_sentences,
         if (is_with_equivalent_type(sentence_type)) {
             HighNode equivalent;
             get_equivalent_sentence_node(node, equivalent);
-            equivalent_sentence_id = get_or_create_sentence_id(checked_sentences, equivalent);
+            equivalent_sentence_id = get_or_create_sentence_id(equivalent);
         }
         sentence_infos[sentence_id] = SentenceInfo(
                 sentence_type, player_id, equivalent_sentence_id);
@@ -248,7 +199,6 @@ void generate_ids() {
     prepare_value_to_theo_type_map();
     ifstream inpf(input_path);
 
-    unordered_set<string> checked_sentences;
     GDLToken token;
     string line;
     HighNode node;
@@ -261,21 +211,10 @@ void generate_ids() {
         for (int i = 0; i < (int)node.sub.size(); ++i) {
             HighNode &not_not_node = not_stripper(node.sub[i]);
             const int sentence_type = get_sentence_type(not_not_node);
-            bool do_debug_print = not_not_node.to_string().find("terminal") != string::npos;
-            if (do_debug_print) {
-                cerr << "hello J " << sentence_type << "\n" << line << endl;
-                cerr << not_not_node.to_string() << endl;
-            }
 
             if (i == 0 || is_input_type(sentence_type) ||
                 sentence_type == SENTENCE_TYPE::LEGAL) {
-                const int sentence_id = get_or_create_sentence_id(checked_sentences, not_not_node);
-
-                if (do_debug_print) {
-                    cerr << sentence_id << endl;
-                }
-            } else if (do_debug_print) {
-                cerr << endl;
+                get_or_create_sentence_id(not_not_node);
             }
         }
         ++done_counter;
@@ -538,6 +477,8 @@ void collect_and_filter_prop_net_data() {
     }
     theorem_remap.resize(upper_theorem_id());
     sentence_remap.resize(upper_sentence_id());
+    sentence_remap[0] = -1;
+    theorem_remap[0] = -1;
     int theorem_counter = 1;
     for (size_t theo_id = 1; theo_id < theorem_remap.size(); ++theo_id) {
         if (!const_theos[theo_id]) {
@@ -559,7 +500,9 @@ void collect_and_filter_prop_net_data() {
 
 void save_debug_info() {
     ofstream debug_out(OutputPaths::debug_info);
-    debug_out << "#SENTENCE MAPPING:\n";
+    const int T = theorem_remap.size() - count(theorem_remap.begin(), theorem_remap.end(), -1);
+    const int S = sentence_remap.size() - count(sentence_remap.begin(), sentence_remap.end(), -1);
+    debug_out << "#SENTENCE_MAPPING: " << S << "\n";
     for (size_t sentence_id = 1; sentence_id < sentence_remap.size(); ++sentence_id) {
         int new_id = sentence_remap[sentence_id];
         if (new_id != -1) {
@@ -567,7 +510,7 @@ void save_debug_info() {
             debug_out << new_id << "\n" << sentence_id_to_str[sentence_id] << "\n";
         }
     }
-    debug_out << "\n#THEOREM MAPPING:\n";
+    debug_out << "\n#THEOREM_MAPPING: " << T << "\n";
     for (size_t theo_id = 1; theo_id < theorem_remap.size(); ++theo_id) {
         int new_id = theorem_remap[theo_id];
         if (new_id != -1) {
@@ -576,7 +519,7 @@ void save_debug_info() {
         }
     }
 
-    debug_out << "\n#REMOVED SENTENCES:\n";
+    debug_out << "\n#REMOVED_SENTENCES:\n";
     for (size_t sentence_id = 1; sentence_id < sentence_remap.size(); ++sentence_id) {
         int new_id = sentence_remap[sentence_id];
         if (new_id == -1) {
@@ -591,7 +534,7 @@ void save_debug_info() {
             debug_out << sentence_id_to_str[sentence_id] << "\n";
         }
     }
-    debug_out << "\n#REMOVED THEOREMS\n";
+    debug_out << "\n#REMOVED_THEOREMS\n";
     for (size_t theo_id = 1; theo_id < theorem_remap.size(); ++theo_id) {
         int new_id = theorem_remap[theo_id];
         if (new_id == -1) {
