@@ -15,6 +15,14 @@ namespace SENTENCE_TYPE {
 };
 
 
+namespace OutputSuffix {
+    constexpr auto DEBUG_INFO = "debug_info";
+    constexpr auto PROPNET_DATA = "propnet_data";
+    constexpr auto BACKTRACK_DATA = "backtrack_data";
+    constexpr auto TYPES_AND_PAIRINGS = "types_and_pairings";
+};
+
+
 struct SentenceInfo {
     int type, equivalent_id, player_id;
     SentenceInfo() {
@@ -48,6 +56,7 @@ inline bool is_output_type(int sentence_type) {
         sentence_type == SENTENCE_TYPE::TERMINAL ||
         sentence_type == SENTENCE_TYPE::GOAL;
 }
+
 
 inline bool is_removable_type(int sentence_type) {
     return sentence_type == SENTENCE_TYPE::NORMAL;

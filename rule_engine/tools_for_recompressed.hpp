@@ -114,24 +114,80 @@ struct BacktrackData {
 
 struct PropnetData {
     // TODO: remember to prepare TheoremHook counter values run "ALL FALSE" first propagation
-    struct TheoremHook {
-        int sentence_id;
+
+    struct GateCounter {
         int counter_max;
-        int counter_value;
+        int true_counter;
+        int false_counter;
+
+        bool is_saturated() const {
+            return true_counter + false_counter == counter_max;
+        }
+
+        bool partially_is_valid() const {
+            return true_counter >= 0 && true_counter <= counter_max && 
+                   false_counter >= 0 && false_counter <= counter_max;
+        }
+
+        bool is_vald() const {
+            return is_saturated() && partially_is_valid();
+        }
+
+        void increment() {
+            ++true_counter;
+            --false_counter;
+        }
+
+        void decrement() {
+            ++false_counter;
+            --true_counter;
+        }
+
+        bool all_true() const {
+            return true_counter == counter_max;
+        }
+
+        bool any_true() const {
+            return true_counter > 0;
+        }
+
+        bool all_false() const {
+            return false_counter == counter_max;
+        }
+
+        bool any_false() const {
+            return false_counter > 0;
+        }
+    };
+
+    struct TheoremHook: GateCounter {
+        int sentence_id;
         TheoremHook() {
             sentence_id = -1;
             counter_max = -1;
-            counter_value = -1;
+            true_counter = -1;
+            false_counter = -1;
         }
     };
-    struct SentenceHook {
+
+    struct SentenceHook: GateCounter {
         int offset;
         int n_deps;
+        int value; // -1 - undecided, 0 - false, 1 - true;
         SentenceHook() {
             offset = -1;
             n_deps = -1;
+            false_counter = -1;
+            true_counter = -1;
+            counter_max = 0;
+            value = -2;
         }
     };
+
+    static const int UNDECIDED = -1;
+    static const int POSTIVE = 1;
+    static const int NEGATIVE = 0;
+
     vector<TheoremHook> theorem_hooks;
     vector<SentenceHook> sentence_hooks;
     vector<int> deps_data;
@@ -169,6 +225,7 @@ struct PropnetData {
         ifstream inp(input_path);
         inp >> n_theorems >> n_sentences;
         theorem_hooks.resize(n_theorems + 1);
+        sentence_hooks.resize(n_sentences + 1);
         for (int it = 1; it <= n_theorems; ++it) {
             int theorem_id = tmapper(it); 
             assert(theorem_id > 0 && theorem_id <= n_theorems);
@@ -180,8 +237,8 @@ struct PropnetData {
             assert(sentence_id > 0 && sentence_id <= n_sentences);
             to_fill.sentence_id = sentence_id;
             inp >> to_fill.counter_max;
+            ++sentence_hooks[sentence_id].counter_max;
         }
-        sentence_hooks.resize(n_sentences + 1);
         for (int it = 1; it <= n_sentences; ++it) {
             int sentence_id = smapper(it);
             assert(sentence_id > 0 && sentence_id <= n_sentences);
