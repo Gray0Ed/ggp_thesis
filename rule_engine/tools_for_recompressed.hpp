@@ -5,6 +5,7 @@
 #include <functional>
 #include <algorithm>
 #include <vector>
+#include <stdexcept>
 
 using namespace std;
 
@@ -77,6 +78,9 @@ struct BacktrackData {
         data.resize(0);
         sentence_offsets.resize(0);
         ifstream inp(input_path);
+        if (!inp) {
+            throw runtime_error("file: " + input_path + " does not exist.");
+        }
         int n_sentences;
         inp >> n_sentences;
         sentence_offsets.resize(n_sentences + 1);
@@ -129,7 +133,7 @@ struct PropnetData {
                    false_counter >= 0 && false_counter <= counter_max;
         }
 
-        bool is_vald() const {
+        bool is_valid() const {
             return is_saturated() && partially_is_valid();
         }
 
@@ -185,7 +189,7 @@ struct PropnetData {
     };
 
     static const int UNDECIDED = -1;
-    static const int POSTIVE = 1;
+    static const int POSITIVE = 1;
     static const int NEGATIVE = 0;
 
     vector<TheoremHook> theorem_hooks;
@@ -223,6 +227,9 @@ struct PropnetData {
         deps_data.resize(0);
         int n_sentences, n_theorems;
         ifstream inp(input_path);
+        if (!inp) {
+            throw runtime_error("file: " + input_path + " does not exist.");
+        }
         inp >> n_theorems >> n_sentences;
         theorem_hooks.resize(n_theorems + 1);
         sentence_hooks.resize(n_sentences + 1);
@@ -273,6 +280,9 @@ struct DebugInfo {
         sentence_id_to_str.resize(0);
         theorem_id_to_str.resize(0);
         ifstream inp(input_path);
+        if (!inp) {
+            throw runtime_error("file: " + input_path + " does not exist.");
+        }
         const int INIT = 0;
         const int SENTENCE_R = 1;
         const int THEOREM_R = 2;
@@ -299,6 +309,7 @@ struct DebugInfo {
             } else {
                 if (!id_was_read) {
                     id = stoi(line);
+                    assert(id > 0);
                     id_was_read = true;
                 } else {
                     GDLTokenizer::tokenize_str(line, token);

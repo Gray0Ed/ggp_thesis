@@ -24,6 +24,9 @@ function<int(int)> consensus_mapper_generator(
 void load_sentence_infos(
         const string &input_path, function<int(int)> mapper, vector<SentenceInfo> &sentence_infos) {
     ifstream inf(input_path);
+    if (!inf) {
+        throw runtime_error("file: " + input_path + " does not exist.");
+    }
     int n_sentences;
     inf >> n_sentences;
     sentence_infos.resize(0);
